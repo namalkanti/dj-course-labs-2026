@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=1.13.0",
+    "google-genai>=2.30.0",
     "marimo>=0.25.1",
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
+    "openai>=3.29.0",
+    "pydantic-ai-slim>=2.55.0",
 ]
 package = false
