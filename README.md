@@ -9,7 +9,11 @@ Modeled after UC Berkeley EE123 lab formats: combining foundational mathematical
 ```
 labs/
 ├── README.md
-└── wk1/                      # Week 1: Onset detection, BPM estimation & meter analysis
+├── primer/                   # Marimo DAG & UI primer
+├── wk1/                      # Week 1: Audio quality, codec analysis & transcode detection
+│   ├── quality_lab.py        # Marimo interactive notebook
+│   └── README.md
+└── wk2/                      # Week 2: Timing, tempo & meter estimation
     ├── timing_lab.py         # Marimo interactive notebook
     └── README.md
 ```
@@ -18,16 +22,16 @@ labs/
 
 All labs manage dependencies reproducibly via [`uv`](https://docs.astral.sh/uv/).
 
-To launch an interactive Marimo lab:
+To launch an interactive Marimo lab (e.g. Week 1):
 
 ```bash
 cd wk1
-uv run --with marimo --with librosa --with matplotlib --with soundfile marimo edit timing_lab.py
+uv run --with marimo --with numpy --with scipy --with matplotlib --with soundfile --with mutagen marimo edit quality_lab.py
 ```
 
 Or view as an app:
 
 ```bash
 cd wk1
-uv run --with marimo --with librosa --with matplotlib --with soundfile marimo run timing_lab.py
+uv run --with marimo --with numpy --with scipy --with matplotlib --with soundfile --with mutagen marimo run quality_lab.py
 ```
