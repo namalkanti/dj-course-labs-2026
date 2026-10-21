@@ -63,6 +63,19 @@ def render_foundations(mo):
     - **Why 192 kbps still isn't club-ready**:
       - Even though 192 kbps reaches ~18 kHz, the encoder squashes high frequencies into **mono** (Intensity Stereo) to save space, collapsing the 3D stereo width on wide club sound systems.
       - The steep digital filter also smears the timing of high-hats and snares, making the mix sound flat, fatiguing, and harsh at high club volumes.
+
+    ---
+
+    ### 1.5 The Gotcha of Slicing & Editing Compressed Audio (FLAC vs MP3)
+    DJs and producers frequently trim, edit, or make intro edits of tracks. How the audio format stores data dictates whether simple splitting works cleanly:
+
+    - **WAV / AIFF (Linear PCM)**: Trivial to slice at the byte level. Because samples are sequential linear amplitudes, any sub-second splice is just an offset calculation into the sample array.
+    - **FLAC (Linear Predictive Coding)**: Frame-based with metadata headers. Naive stream copies without rebuilding seek tables will corrupt decoders (like `libsndfile` / Pioneer players failing with `psf_fseek()` errors). Re-encoding or using frame-aware FLAC tooling ensures valid header indices.
+    - **MP3 (MDCT Coefficients & Bit Reservoir)**:
+      1. *No sample-exact cutting*: MP3 is stored in 1152-sample transform frames ($\approx 26.1\text{ ms}$). You can only cut on frame boundaries.
+      2. *50% Overlap (TDAC)*: MDCT frames overlap by 50% to cancel aliasing. Slicing raw frames abruptly introduces audible boundary clicks.
+      3. *The Bit Reservoir*: MP3 encoders dynamically borrow bits from earlier frames (`main_data_begin` back-pointers). Slicing an MP3 without tracking the bit reservoir leaves orphan frames that fail to decode properly.
+    - **DJ Takeaway**: When making track edits, quick cues, or snippets for analysis, **always decode to PCM first** (WAV, AIFF, or NumPy float array), make your sample-exact cuts, and only re-encode at the very end. Never do naive stream-copy slicing on lossy containers.
     """)
     return
 
@@ -70,23 +83,24 @@ def render_foundations(mo):
 @app.cell(hide_code=True)
 def render_translation_table(mo):
     mo.md(r"""
-    ### 1.5 DJ-to-DSP Translation Table
+    ### 1.6 Week 1 Vocabulary: Perceptual Symptoms of a "Fake 320" vs. DSP Reality
 
-    | DJ / Club Jargon | What the DJ Hears | The Physical DSP Phenomenon |
+    When a DJ plays a low-bitrate stream or YouTube rip that was upscaled into a fake 320 kbps MP3 or WAV, they don't see the algorithm—they hear specific acoustic symptoms on a high-SPL club sound system.
+
+    | DJ Perceptual Description | Domain | The Physical DSP Phenomenon |
     |---|---|---|
-    | **"Muffled / Boxy / No Air"** | Cymbals, snares, and vocals lack sparkle and space. | **Brick-wall lowpass cutoff** ($f_c \le 16\text{ kHz}$) applied by 128 kbps encoders. |
-    | **"Mushy Kick / Blurry Transients"** | Kick drums lose punch/snap; basslines feel flabby. | **MDCT temporal pre-echo**: Quantization noise spreads backward ~20 ms before the transient inside long MDCT blocks. |
-    | **"Watery / Swishy / Phasey Cymbals"** | Hi-hats sound like they are playing through a phaser or underwater. | **Intensity Stereo + High-Band Bit Starvation**: High subbands are coarsely quantized or blended to mono, causing erratic phase variance frame-to-frame. |
-    | **"Fake 320 / YouTube Rip"** | Track reports high bitrate or WAV, but sounds lifeless compared to other tracks in the mix. | **Inflated Container Header**: File was transcoded from low-bitrate lossy, leaving zero energy above 16 kHz despite the 320k/WAV header. |
-    | **"Falls Apart at High Volume"** | Sounds fine on laptop/headphones, but harsh and fatiguing on the club PA. | **Psychoacoustic Masking Breakdown**: Masking models assume domestic listening (~70 dB SPL). At 100+ dB SPL club levels, hearing contours flatten and hidden quantization noise becomes glaringly audible. |
+    | **"Muffled / Boxy / No Air"** | Frequency Domain | **Brick-wall lowpass cutoff ($f_c \le 16.0\text{ kHz}$)**: Encoders conserve bit budget by discarding the top octave ($16\text{–}22.05\text{ kHz}$). High harmonics of cymbals, snare sizzle, and vocal breath are completely eliminated. |
+    | **"Mushy Kick / Lost Transient Punch"** | Time Domain | **MDCT temporal pre-echo**: Quantization noise spreads backward ~20 ms before the sharp transient inside the 1152-sample transform window, softening the initial attack of kicks and snares. |
+    | **"Lacks Energy / Falls Flat in the Mix"** | Psychoacoustic Loudness | **Spectral energy depletion**: Stripping upper harmonics and aggressive psychoacoustic masking reduces perceived RMS loudness (ITU-R BS.1770 curve), making the track feel weak compared to legitimate masters. |
+
+    *(Note: Validate these perceptual terms with your YourShot instructor during your 1-on-1 session.)*
     """)
     return
 
 
 @app.cell
 def load_dsp_modules():
-    import io
-    import mutagen
+    from pathlib import Path
     import matplotlib.pyplot as plt
     import numpy as np
     import scipy.signal as signal
@@ -95,36 +109,107 @@ def load_dsp_modules():
         apply_lossy_cutoff,
         generate_chirp,
         generate_drum_loop,
+        generate_transient_clicks,
         generate_white_noise,
     )
 
-    return (plt,)
+    return (
+        Path,
+        apply_lossy_cutoff,
+        generate_chirp,
+        generate_drum_loop,
+        generate_transient_clicks,
+        generate_white_noise,
+        plt,
+        sf,
+    )
+
+
+@app.cell
+def load_audio_catalog(
+    Path,
+    generate_chirp,
+    generate_drum_loop,
+    generate_transient_clicks,
+    generate_white_noise,
+    sf,
+):
+    fs = 44100
+    catalog = {}
+
+    # Synthetic fixtures (3 seconds, fs=44100)
+    synthetic_defs = [
+        ("Synthetic: Drum Groove (128 BPM)", lambda: generate_drum_loop(3.0, 128.0, fs)),
+        ("Synthetic: Isolated Transients (Castanet / Rimshot Pre-Echo Test)", lambda: generate_transient_clicks(2.0, (0.4, 0.9, 1.4), fs)),
+        ("Synthetic: Exponential Chirp (20 Hz - 22 kHz)", lambda: generate_chirp(3.0, fs)),
+        ("Synthetic: White Noise (Wideband)", lambda: generate_white_noise(3.0, fs)),
+    ]
+    for label, generator in synthetic_defs:
+        arr = generator()
+        arr.setflags(write=False)
+        catalog[label] = arr
+
+    # Real reference audio fixtures
+    fixture_dir = Path(__file__).parent / "fixtures"
+    real_defs = [
+        (
+            "Real Audio: Persistence - Dabmasterars (Lossless FLAC)",
+            fixture_dir / "persistence_by_dabmasterars_snippet.flac",
+        ),
+        (
+            "Real Audio: High Technologic Beat Explosion - Loyalty Freak Music (320k MP3)",
+            fixture_dir / "high_technologic_beat_explosion_by_loyalty_freak_music_snippet.mp3",
+        ),
+    ]
+    for label, filepath in real_defs:
+        if filepath.exists():
+            data, file_fs = sf.read(str(filepath), dtype="float32")
+            mono = data.mean(axis=1) if data.ndim > 1 else data
+            mono.setflags(write=False)
+            catalog[label] = mono
+    return catalog, fs
 
 
 @app.cell(hide_code=True)
 def render_part2_intro(mo):
     mo.md(r"""
-    ## Part 2: Interactive Synthetic Ground Truth Lab (Homework Exercises)
+    ## Part 2: Pristine Signal Analysis & Codec Filter Lab (Homework Exercises)
 
-    In this section, you will inspect synthetic test signals (white noise, log chirps, synthesized drum grooves) and simulate the frequency cutoffs imposed by lossy encoders.
+    In this lab, you'll work with an immutable catalog of clean audio signals (both mathematical synthetic signals and real reference tracks).
 
-    Before building an automated cutoff detector in Step 4, complete the two exercises below to:
-    1. Synthesize and filter the chosen test signal based on UI controls.
-    2. Compute its spectrogram and power spectrum to visually spot the lossy cutoff shelf.
+    Follow the natural DSP progression:
+    1. **Exercise 1 (Baseline)**: Listen to the uncompressed audio, compute its raw 1D Fourier spectrum, and compute its 2D STFT spectrogram.
+    2. **Exercise 2 (Phrases vs. Global)**: Compare phrase-windowed FFTs (breakdown vs. drop) against the entire signal.
+    3. **Exercise 3 (Lossy Cutoff Shock)**: Apply simulated MP3 encoder filters (320k, 192k, 128k) and observe the destruction of high-frequency content.
     """)
     return
 
+@app.cell(hide_code=True)
+def render_audio_gallery(catalog, fs, mo):
+    gallery_items = []
+    for name, audio in catalog.items():
+        gallery_items.append(
+            mo.hstack(
+                [
+                    mo.md(f"**{name}**"),
+                    mo.audio(audio, rate=fs),
+                ],
+                justify="space-between",
+                align="center",
+            )
+        )
+    mo.vstack([
+        mo.md("### Audio Track Catalog"),
+        mo.vstack(gallery_items, gap=1),
+    ])
+    return
 
 @app.cell
-def build_controls(mo):
-    signal_type = mo.ui.dropdown(
-        options={
-            "Drum Groove (128 BPM)": "drums",
-            "Exponential Chirp (20 Hz - 22 kHz)": "chirp",
-            "White Noise (Wideband)": "noise",
-        },
-        value="Drum Groove (128 BPM)",
-        label="Test Signal",
+def build_controls(catalog, mo):
+    signal_selector = mo.ui.dropdown(
+        options=list(catalog.keys()),
+        value="Synthetic: Drum Groove (128 BPM)",
+        label="Select Audio Track / Signal",
     )
 
     codec_cutoff = mo.ui.dropdown(
@@ -135,140 +220,225 @@ def build_controls(mo):
             "~128 kbps MP3 (16.0 kHz brick-wall)": 16000.0,
         },
         value="Lossless / Passthrough (22.05 kHz Nyquist)",
-        label="Simulated Codec Cutoff",
+        label="Simulated Codec Cutoff (for Ex 3)",
     )
 
-    mo.hstack([signal_type, codec_cutoff], justify="start", gap=2)
+    mo.hstack([signal_selector, codec_cutoff], justify="start", gap=2)
+    return codec_cutoff, signal_selector
+
+
+@app.cell
+def get_selected_signal(catalog, signal_selector):
+    selected_audio = catalog[signal_selector.value]
+    return (selected_audio,)
+
+@app.cell
+def exercise_1_pristine_analysis(fs, mo, np, plt, selected_audio, signal):
+    player = mo.audio(selected_audio, rate=fs)
+
+    # 1. 1D Windowed Fourier Transform (Full signal length)
+    N = len(selected_audio)
+    window = np.hanning(N)
+    X = np.fft.rfft(selected_audio * window)
+    freqs = np.fft.rfftfreq(N, d=1.0 / fs)
+    mag_db = 20.0 * np.log10(np.abs(X) / (N / 2.0) + 1e-12)
+
+    # 2. 2D STFT Spectrogram (Time-Frequency)
+    nperseg = 2048
+    noverlap = 1536
+    f_stft, t_stft, Zxx = signal.stft(
+        selected_audio,
+        fs=fs,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=noverlap,
+    )
+    S_db = 20.0 * np.log10(np.abs(Zxx) + 1e-9)
+    # Clip display dynamic range to top 80 dB
+    vmax = float(np.max(S_db))
+    vmin = vmax - 80.0
+
+    # 3. Dual-panel visualization
+    fig, (ax_spec, ax_stft) = plt.subplots(1, 2, figsize=(14, 4.5))
+
+    # Left: 1D Fourier Spectrum (log frequency scale for musical octaves)
+    ax_spec.semilogx(freqs, mag_db, color="#00bcd4", lw=0.9)
+    ax_spec.set_xlim(20.0, fs / 2.0)
+    ax_spec.set_ylim(-100.0, max(0.0, float(np.max(mag_db) + 6.0)))
+    ax_spec.set_title("1D Fourier Spectrum (Full Track FFT)")
+    ax_spec.set_xlabel("Frequency (Hz)")
+    ax_spec.set_ylabel("Magnitude (dBFS)")
+    ax_spec.grid(True, which="both", alpha=0.25)
+
+    # Right: 2D STFT Spectrogram
+    mesh = ax_stft.pcolormesh(
+        t_stft,
+        f_stft,
+        S_db,
+        shading="gouraud",
+        cmap="magma",
+        vmin=vmin,
+        vmax=vmax,
+    )
+    ax_stft.set_ylim(0.0, fs / 2.0)
+    ax_stft.set_title("2D STFT Spectrogram (Time vs Freq)")
+    ax_stft.set_xlabel("Time (s)")
+    ax_stft.set_ylabel("Frequency (Hz)")
+    fig.colorbar(mesh, ax=ax_stft, label="dB")
+
+    fig.tight_layout()
+
+    output_1 = mo.vstack([
+        mo.md("#### Exercise 1: Pristine Audio Analysis (1D Spectrum vs. 2D Spectrogram)"),
+        player,
+        mo.as_html(fig),
+    ])
+    output_1
     return
 
 
 @app.cell
-def exercise_1_generate_and_filter(mo):
-    # =========================================================================
-    # HOMEWORK EXERCISE 1: Generate & Filter Signal
-    # =========================================================================
-    # Goal:
-    # 1. Inspect `signal_type.value` ("drums", "chirp", or "noise") and call
-    #    the matching generator from `wk1/synth.py`. Use duration_sec=3.0, fs=44100.
-    # 2. Filter the resulting audio array using `apply_lossy_cutoff(...)` with
-    #    `cutoff_hz=codec_cutoff.value`.
-    # 3. Encode the filtered audio into a WAV in-memory buffer (io.BytesIO) via
-    #    `sf.write(buf, filtered_audio, fs, format="WAV")` and create an audio player
-    #    using `mo.audio(buf.getvalue())`.
-    #
-    # Hints:
-    # - `signal_type.value` gives the selected key ("drums", "chirp", "noise").
-    # - `apply_lossy_cutoff(audio, cutoff_hz=..., fs=44100)` automatically bypasses
-    #   if cutoff_hz >= fs / 2 (Nyquist).
-    # - Don't forget `buf.seek(0)` before passing `buf.getvalue()` to `mo.audio`.
-    # =========================================================================
+def exercise_2_phrase_vs_global_spectrum(fs, mo, np, plt, selected_audio):
+    N_total = len(selected_audio)
+    w_total = np.hanning(N_total)
+    fft_total = np.fft.rfft(selected_audio * w_total)
+    freqs_total = np.fft.rfftfreq(N_total, d=1.0 / fs)
+    db_total = 20.0 * np.log10(np.abs(fft_total) / (N_total / 2.0) + 1e-12)
 
-    fs = 44100
-    duration_sec = 3.0
+    # Split into Phrase A (first half) and Phrase B (second half)
+    mid = N_total // 2
+    phrase_a = selected_audio[:mid]
+    phrase_b = selected_audio[mid:]
 
-    # --- TODO: YOUR CODE HERE ---
-    # raw_audio = ...
-    # filtered_audio = ...
-    # player = ...
+    N_a = len(phrase_a)
+    fft_a = np.fft.rfft(phrase_a * np.hanning(N_a))
+    freqs_a = np.fft.rfftfreq(N_a, d=1.0 / fs)
+    db_a = 20.0 * np.log10(np.abs(fft_a) / (N_a / 2.0) + 1e-12)
 
-    raw_audio = None
-    filtered_audio = None
-    player = mo.md("*Complete Exercise 1 to listen to the audio output.*")
-    # -----------------------------
+    N_b = len(phrase_b)
+    fft_b = np.fft.rfft(phrase_b * np.hanning(N_b))
+    freqs_b = np.fft.rfftfreq(N_b, d=1.0 / fs)
+    db_b = 20.0 * np.log10(np.abs(fft_b) / (N_b / 2.0) + 1e-12)
 
-    player
-    return (filtered_audio,)
+    fig_fft, (ax_sub, ax_full) = plt.subplots(1, 2, figsize=(14, 4.5))
 
+    # Left: Sub-bass & Bass register (20 Hz - 300 Hz) showing kick & sub pitch spikes
+    ax_sub.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.2, alpha=0.8)
+    ax_sub.semilogx(freqs_a, db_a, label="Phrase A (0 - 50%)", color="#ff9800", lw=0.9, alpha=0.7)
+    ax_sub.semilogx(freqs_b, db_b, label="Phrase B (50 - 100%)", color="#e91e63", lw=0.9, alpha=0.7)
+    ax_sub.set_xlim(20.0, 300.0)
+    ax_sub.set_ylim(-80.0, max(0.0, float(np.max(db_total) + 6.0)))
+    ax_sub.set_title("Sub-Bass Fundamental Peaks (20 - 300 Hz)")
+    ax_sub.set_xlabel("Frequency (Hz)")
+    ax_sub.set_ylabel("Magnitude (dBFS)")
+    ax_sub.grid(True, which="both", alpha=0.25)
+    ax_sub.legend(loc="upper right")
 
-@app.cell
-def exercise_2_spectral_inspector(filtered_audio, mo, plt):
-    # =========================================================================
-    # HOMEWORK EXERCISE 2: Spectrogram & High-Frequency Power Roll-off
-    # =========================================================================
-    # Goal:
-    # Plot two synchronized subplots:
-    #   - Left / Top: STFT Spectrogram (frequency vs. time) showing energy up to Nyquist (22.05 kHz).
-    #     Draw a horizontal dashed red line at `codec_cutoff.value`.
-    #   - Right / Bottom: Average High-Frequency Power Spectrum P(f) (dB vs. frequency)
-    #     specifically zoomed into 10 kHz - 22.05 kHz to clearly show the cliff/shelf.
-    #
-    # Hints:
-    # - Use `signal.stft(filtered_audio, fs=fs, nperseg=2048, noverlap=1536, window='hann')`
-    #   or `signal.spectrogram`.
-    # - Convert magnitude to dB: `S_db = 20 * np.log10(np.abs(Zxx) + 1e-9)`.
-    # - Average power spectrum: `P_db = 10 * np.log10(np.mean(np.abs(Zxx)**2, axis=1) + 1e-12)`.
-    # - Highlight where the cutoff sits so you can visually correlate the audio artifact
-    #   (Exercise 1) with the spectral shelf.
-    # =========================================================================
+    # Right: Full Frequency Spectrum (20 Hz - 22.05 kHz) showing tonal tilt & high-end air
+    ax_full.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.2, alpha=0.8)
+    ax_full.semilogx(freqs_a, db_a, label="Phrase A", color="#ff9800", lw=0.8, alpha=0.6)
+    ax_full.semilogx(freqs_b, db_b, label="Phrase B", color="#e91e63", lw=0.8, alpha=0.6)
+    ax_full.set_xlim(20.0, fs / 2.0)
+    ax_full.set_ylim(-90.0, max(0.0, float(np.max(db_total) + 6.0)))
+    ax_full.set_title("Full Spectrum Tonal Balance (20 Hz - 22 kHz)")
+    ax_full.set_xlabel("Frequency (Hz)")
+    ax_full.set_ylabel("Magnitude (dBFS)")
+    ax_full.grid(True, which="both", alpha=0.25)
+    ax_full.legend(loc="upper right")
 
-    if filtered_audio is None:
-        plot_output = mo.md("*Complete Exercise 1 and 2 to visualize the spectrogram.*")
-    else:
-        fig, (ax_spec, ax_psd) = plt.subplots(1, 2, figsize=(13, 4.5))
-
-        # --- TODO: YOUR PLOTTING CODE HERE ---
-        # ax_spec.pcolormesh(...)
-        # ax_psd.plot(...)
-        # -------------------------------------
-
-        fig.tight_layout()
-        plot_output = mo.ui.matplotlib(fig)
-
-    plot_output
+    fig_fft.tight_layout()
+    output_2 = mo.vstack([
+        mo.md("#### Exercise 2: Global vs. Phrase-Windowed FFT Analysis"),
+        mo.as_html(fig_fft),
+    ])
+    output_2
     return
 
 
 @app.cell
-def exercise_3_phrase_vs_global_spectrum(filtered_audio, mo, plt):
-    # =========================================================================
-    # HOMEWORK EXERCISE 3: Global FFT vs. Phrase-Windowed FFT (Tonal Balance & EQ)
-    # =========================================================================
-    # Goal:
-    # Compare the raw 1D Fourier Transform of the ENTIRE audio track against
-    # individual temporal sections / phrases (e.g. First Half vs. Second Half,
-    # or Intro/Breakdown vs. Drop):
-    #
-    # 1. Compute the raw Discrete Fourier Transform (`np.fft.rfft`) of the
-    #    entire signal `filtered_audio`. Window with `np.hanning(len(filtered_audio))`.
-    # 2. Slice `filtered_audio` into two temporal phrases (e.g. Phrase A: 0.0 - 1.5s,
-    #    Phrase B: 1.5s - 3.0s). Compute windowed `rfft` for each phrase.
-    # 3. Plot two panels:
-    #    - Panel 1 (Sub-bass & Bass: 20 Hz - 300 Hz on log scale):
-    #      Observe how the long FFT reveals discrete fundamental kick/bass pitch spikes
-    #      that are smeared in short STFT windows.
-    #    - Panel 2 (Full Spectrum: 20 Hz - 22 kHz on log scale):
-    #      Compare Phrase A vs. Phrase B vs. Full Track: see which frequencies dominate
-    #      which part of the phrase (e.g., hi-hat air vs. sub weight), informing
-    #      pre-drop HPF sweeps or 3-band EQ carve-outs.
-    #
-    # Hints:
-    # - `freqs = np.fft.rfftfreq(N, d=1.0 / fs)`
-    # - `mag_db = 20 * np.log10(np.abs(fft_vals) / (N / 2) + 1e-12)`
-    # - Use `ax.set_xscale('log')` or `ax.semilogx(...)` for musical octaves.
-    # =========================================================================
+def exercise_3_codec_cutoff_simulation(
+    apply_lossy_cutoff,
+    codec_cutoff,
+    fs,
+    mo,
+    np,
+    plt,
+    selected_audio,
+    signal,
+):
+    filtered = apply_lossy_cutoff(selected_audio, cutoff_hz=codec_cutoff.value, fs=fs)
+    player_filtered = mo.audio(filtered, rate=fs)
 
-    if filtered_audio is None:
-        phrase_output = mo.md("*Complete Exercise 1 to explore global vs. phrase Fourier spectra.*")
-    else:
-        fig_fft, (ax_sub, ax_full) = plt.subplots(1, 2, figsize=(13, 4.5))
+    # 1. Compute STFT of filtered audio
+    f_filt, t_filt, Z_filt = signal.stft(
+        filtered,
+        fs=fs,
+        window="hann",
+        nperseg=2048,
+        noverlap=1536,
+    )
+    S_filt_db = 20.0 * np.log10(np.abs(Z_filt) + 1e-9)
+    vmax_filt = float(np.max(S_filt_db))
+    vmin_filt = vmax_filt - 80.0
 
-        # --- TODO: YOUR FFT & PLOTTING CODE HERE ---
-        # N_total = len(filtered_audio)
-        # full_fft = np.fft.rfft(filtered_audio * np.hanning(N_total))
-        # freqs_total = np.fft.rfftfreq(N_total, d=1.0 / fs)
-        #
-        # mid = N_total // 2
-        # phrase_a = filtered_audio[:mid]
-        # phrase_b = filtered_audio[mid:]
-        # ...
-        # ax_sub.semilogx(...)
-        # ax_full.semilogx(...)
-        # -------------------------------------------
+    # 2. Time-averaged power spectrum P(f) in dB
+    # Mean power across time frames: 10 * log10(mean(|Zxx|^2))
+    power_lin = np.mean(np.abs(Z_filt) ** 2, axis=1)
+    power_db = 10.0 * np.log10(power_lin + 1e-12)
+    # Normalize peak to 0 dB for easy cutoff inspection
+    power_db -= np.max(power_db)
 
-        fig_fft.tight_layout()
-        phrase_output = mo.ui.matplotlib(fig_fft)
+    fig_filtered, (ax_stft_filt, ax_shelf) = plt.subplots(1, 2, figsize=(14, 4.5))
 
-    phrase_output
+    # Left: Filtered STFT Spectrogram with dashed cutoff line
+    mesh_filt = ax_stft_filt.pcolormesh(
+        t_filt,
+        f_filt,
+        S_filt_db,
+        shading="gouraud",
+        cmap="magma",
+        vmin=vmin_filt,
+        vmax=vmax_filt,
+    )
+    ax_stft_filt.set_ylim(0.0, fs / 2.0)
+    ax_stft_filt.axhline(
+        codec_cutoff.value,
+        color="#00e676",
+        linestyle="--",
+        lw=1.5,
+        label=f"Cutoff: {codec_cutoff.value / 1000.0:.1f} kHz",
+    )
+    ax_stft_filt.set_title("Filtered STFT Spectrogram")
+    ax_stft_filt.set_xlabel("Time (s)")
+    ax_stft_filt.set_ylabel("Frequency (Hz)")
+    ax_stft_filt.legend(loc="upper right")
+    fig_filtered.colorbar(mesh_filt, ax=ax_stft_filt, label="dB")
+
+    # Right: High-Frequency Zoom (10 kHz - 22.05 kHz) showing steep cutoff shelf
+    mask_high = f_filt >= 10000.0
+    ax_shelf.plot(f_filt[mask_high] / 1000.0, power_db[mask_high], color="#ff5722", lw=1.5)
+    ax_shelf.axvline(
+        codec_cutoff.value / 1000.0,
+        color="#00e676",
+        linestyle="--",
+        lw=1.5,
+        label=f"Cutoff ({codec_cutoff.value / 1000.0:.1f} kHz)",
+    )
+    ax_shelf.set_xlim(10.0, (fs / 2.0) / 1000.0)
+    ax_shelf.set_ylim(-70.0, 5.0)
+    ax_shelf.set_title("High-Frequency Spectral Rolloff (10 - 22 kHz)")
+    ax_shelf.set_xlabel("Frequency (kHz)")
+    ax_shelf.set_ylabel("Relative Power (dB)")
+    ax_shelf.grid(True, alpha=0.3)
+    ax_shelf.legend(loc="lower left")
+
+    fig_filtered.tight_layout()
+    output_3 = mo.vstack([
+        mo.md(f"#### Exercise 3: Codec Cutoff Filtering (Simulated Cutoff: **{codec_cutoff.value / 1000.0:.1f} kHz**)"),
+        player_filtered,
+        mo.as_html(fig_filtered),
+    ])
+    output_3
     return
 
 

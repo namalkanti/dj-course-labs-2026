@@ -257,3 +257,51 @@ def exponential_decay_envelope(
     return np.exp(-t / tau_sec).astype(np.float32)
 
 
+def generate_transient_clicks(
+    duration_sec: float = 2.0,
+    click_times_sec: Tuple[float, ...] = (0.4, 0.9, 1.4),
+    fs: int = 44100,
+) -> np.ndarray:
+    """Synthesize isolated dry transient clicks against silence (castanet/rimshot style).
+
+    Designed specifically as an MDCT codec pre-echo torture test. Each click consists
+    of a tight 12ms wideband burst (resonant metallic ping + filtered noise transient)
+    separated by pure silence.
+
+    Args:
+        duration_sec: Total length in seconds.
+        click_times_sec: Timestamps in seconds where transients occur.
+        fs: Sampling rate in Hz.
+
+    Returns:
+        1D NumPy float32 array normalized to [-1.0, 1.0].
+    """
+    total_samples = int(duration_sec * fs)
+    signal_out = np.zeros(total_samples, dtype=np.float32)
+
+    click_duration = 0.012  # 12 ms
+    click_len = int(click_duration * fs)
+    t_click = np.linspace(0.0, click_duration, click_len, endpoint=False, dtype=np.float32)
+
+    rng = np.random.default_rng(42)
+    noise_burst = rng.normal(0.0, 0.4, click_len).astype(np.float32)
+    envelope = np.exp(-t_click / 0.002).astype(np.float32)  # 2 ms tau decay
+    ping = np.sin(2.0 * np.pi * 1400.0 * t_click, dtype=np.float32) * np.exp(-t_click / 0.003).astype(np.float32)
+
+    single_click = (noise_burst * envelope + ping * 0.6).astype(np.float32)
+
+    for click_time in click_times_sec:
+        start_idx = int(click_time * fs)
+        end_idx = min(start_idx + click_len, total_samples)
+        valid_len = end_idx - start_idx
+        if valid_len > 0:
+            signal_out[start_idx:end_idx] += single_click[:valid_len]
+
+    peak = np.max(np.abs(signal_out))
+    if peak > 0:
+        signal_out = (signal_out / peak * 0.9).astype(np.float32)
+
+    return signal_out
+
+
+
