@@ -11,7 +11,7 @@ import unittest
 import numpy as np
 import scipy.signal as signal
 
-from synth import (
+from yourshot.synth import (
     generate_white_noise,
     generate_chirp,
     generate_drum_loop,

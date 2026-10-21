@@ -1,3 +1,5 @@
-"""YourShot Core Audio & DJ Tooling Library."""
+"""YourShot DJ & Audio DSP Toolkit."""
 
-__version__ = "0.1.0"
+from yourshot import audio_catalog, synth
+
+__all__ = ["audio_catalog", "synth"]

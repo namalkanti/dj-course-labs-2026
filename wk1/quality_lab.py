@@ -105,68 +105,21 @@ def load_dsp_modules():
     import numpy as np
     import scipy.signal as signal
     import soundfile as sf
-    from synth import (
-        apply_lossy_cutoff,
-        generate_chirp,
-        generate_drum_loop,
-        generate_transient_clicks,
-        generate_white_noise,
-    )
+    from yourshot.audio_catalog import load_audio_catalog
+    from yourshot.synth import apply_lossy_cutoff
 
     return (
         Path,
         apply_lossy_cutoff,
-        generate_chirp,
-        generate_drum_loop,
-        generate_transient_clicks,
-        generate_white_noise,
+        load_audio_catalog,
         plt,
         sf,
     )
 
 
 @app.cell
-def load_audio_catalog(
-    Path,
-    generate_chirp,
-    generate_drum_loop,
-    generate_transient_clicks,
-    generate_white_noise,
-    sf,
-):
-    fs = 44100
-    catalog = {}
-
-    # Synthetic fixtures (3 seconds, fs=44100)
-    synthetic_defs = [
-        ("Synthetic: Drum Groove (128 BPM)", lambda: generate_drum_loop(3.0, 128.0, fs)),
-        ("Synthetic: Isolated Transients (Castanet / Rimshot Pre-Echo Test)", lambda: generate_transient_clicks(2.0, (0.4, 0.9, 1.4), fs)),
-        ("Synthetic: Exponential Chirp (20 Hz - 22 kHz)", lambda: generate_chirp(3.0, fs)),
-        ("Synthetic: White Noise (Wideband)", lambda: generate_white_noise(3.0, fs)),
-    ]
-    for label, generator in synthetic_defs:
-        arr = generator()
-        arr.setflags(write=False)
-        catalog[label] = arr
-
-    # Real reference audio fixtures
-    fixture_dir = Path(__file__).parent / "fixtures"
-    real_defs = [
-        (
-            "Real Audio: Persistence - Dabmasterars (Lossless FLAC)",
-            fixture_dir / "persistence_by_dabmasterars_snippet.flac",
-        ),
-        (
-            "Real Audio: High Technologic Beat Explosion - Loyalty Freak Music (320k MP3)",
-            fixture_dir / "high_technologic_beat_explosion_by_loyalty_freak_music_snippet.mp3",
-        ),
-    ]
-    for label, filepath in real_defs:
-        if filepath.exists():
-            data, file_fs = sf.read(str(filepath), dtype="float32")
-            mono = data.mean(axis=1) if data.ndim > 1 else data
-            mono.setflags(write=False)
-            catalog[label] = mono
+def get_catalog_and_fs(load_audio_catalog):
+    catalog, fs = load_audio_catalog(fs=44100)
     return catalog, fs
 
 
@@ -236,22 +189,27 @@ def get_selected_signal(catalog, signal_selector):
 def exercise_1_pristine_analysis(fs, mo, np, plt, selected_audio, signal):
     player = mo.audio(selected_audio, rate=fs)
 
-    # 1. 1D Windowed Fourier Transform (Full signal length)
-    N = len(selected_audio)
-    window = np.hanning(N)
-    X = np.fft.rfft(selected_audio * window)
-    freqs = np.fft.rfftfreq(N, d=1.0 / fs)
-    mag_db = 20.0 * np.log10(np.abs(X) / (N / 2.0) + 1e-12)
+    # 1. Averaged Power Spectral Density via Welch's method (N=4096, 50% overlap)
+    _nperseg_welch = min(4096, len(selected_audio))
+    freqs, psd = signal.welch(
+        selected_audio,
+        fs=fs,
+        window="hann",
+        nperseg=_nperseg_welch,
+        noverlap=_nperseg_welch // 2,
+        scaling="spectrum",
+    )
+    mag_db = 10.0 * np.log10(psd + 1e-12)
 
     # 2. 2D STFT Spectrogram (Time-Frequency)
-    nperseg = 2048
-    noverlap = 1536
+    _nperseg_stft = 2048
+    _noverlap_stft = 1536
     f_stft, t_stft, Zxx = signal.stft(
         selected_audio,
         fs=fs,
         window="hann",
-        nperseg=nperseg,
-        noverlap=noverlap,
+        nperseg=_nperseg_stft,
+        noverlap=_noverlap_stft,
     )
     S_db = 20.0 * np.log10(np.abs(Zxx) + 1e-9)
     # Clip display dynamic range to top 80 dB
@@ -261,13 +219,13 @@ def exercise_1_pristine_analysis(fs, mo, np, plt, selected_audio, signal):
     # 3. Dual-panel visualization
     fig, (ax_spec, ax_stft) = plt.subplots(1, 2, figsize=(14, 4.5))
 
-    # Left: 1D Fourier Spectrum (log frequency scale for musical octaves)
-    ax_spec.semilogx(freqs, mag_db, color="#00bcd4", lw=0.9)
+    # Left: Smoothed Power Spectrum (log frequency scale for musical octaves)
+    ax_spec.semilogx(freqs, mag_db, color="#00bcd4", lw=1.5)
     ax_spec.set_xlim(20.0, fs / 2.0)
     ax_spec.set_ylim(-100.0, max(0.0, float(np.max(mag_db) + 6.0)))
-    ax_spec.set_title("1D Fourier Spectrum (Full Track FFT)")
+    ax_spec.set_title("Averaged Power Spectrum (Welch PSD)")
     ax_spec.set_xlabel("Frequency (Hz)")
-    ax_spec.set_ylabel("Magnitude (dBFS)")
+    ax_spec.set_ylabel("Power (dBFS)")
     ax_spec.grid(True, which="both", alpha=0.25)
 
     # Right: 2D STFT Spectrogram
@@ -289,7 +247,7 @@ def exercise_1_pristine_analysis(fs, mo, np, plt, selected_audio, signal):
     fig.tight_layout()
 
     output_1 = mo.vstack([
-        mo.md("#### Exercise 1: Pristine Audio Analysis (1D Spectrum vs. 2D Spectrogram)"),
+        mo.md("#### Exercise 1: Pristine Audio Analysis (Averaged Spectrum vs. 2D Spectrogram)"),
         player,
         mo.as_html(fig),
     ])
@@ -298,57 +256,59 @@ def exercise_1_pristine_analysis(fs, mo, np, plt, selected_audio, signal):
 
 
 @app.cell
-def exercise_2_phrase_vs_global_spectrum(fs, mo, np, plt, selected_audio):
-    N_total = len(selected_audio)
-    w_total = np.hanning(N_total)
-    fft_total = np.fft.rfft(selected_audio * w_total)
-    freqs_total = np.fft.rfftfreq(N_total, d=1.0 / fs)
-    db_total = 20.0 * np.log10(np.abs(fft_total) / (N_total / 2.0) + 1e-12)
-
-    # Split into Phrase A (first half) and Phrase B (second half)
-    mid = N_total // 2
+def exercise_2_phrase_vs_global_spectrum(fs, mo, np, plt, selected_audio, signal):
+    # Segment audio into Phrase A (first half) and Phrase B (second half)
+    mid = len(selected_audio) // 2
     phrase_a = selected_audio[:mid]
     phrase_b = selected_audio[mid:]
 
-    N_a = len(phrase_a)
-    fft_a = np.fft.rfft(phrase_a * np.hanning(N_a))
-    freqs_a = np.fft.rfftfreq(N_a, d=1.0 / fs)
-    db_a = 20.0 * np.log10(np.abs(fft_a) / (N_a / 2.0) + 1e-12)
+    _nperseg_p = min(4096, len(phrase_a))
+    _noverlap_p = _nperseg_p // 2
 
-    N_b = len(phrase_b)
-    fft_b = np.fft.rfft(phrase_b * np.hanning(N_b))
-    freqs_b = np.fft.rfftfreq(N_b, d=1.0 / fs)
-    db_b = 20.0 * np.log10(np.abs(fft_b) / (N_b / 2.0) + 1e-12)
+    freqs_total, psd_total = signal.welch(
+        selected_audio, fs=fs, window="hann", nperseg=_nperseg_p, noverlap=_noverlap_p, scaling="spectrum"
+    )
+    db_total = 10.0 * np.log10(psd_total + 1e-12)
+
+    freqs_a, psd_a = signal.welch(
+        phrase_a, fs=fs, window="hann", nperseg=_nperseg_p, noverlap=_noverlap_p, scaling="spectrum"
+    )
+    db_a = 10.0 * np.log10(psd_a + 1e-12)
+
+    freqs_b, psd_b = signal.welch(
+        phrase_b, fs=fs, window="hann", nperseg=_nperseg_p, noverlap=_noverlap_p, scaling="spectrum"
+    )
+    db_b = 10.0 * np.log10(psd_b + 1e-12)
 
     fig_fft, (ax_sub, ax_full) = plt.subplots(1, 2, figsize=(14, 4.5))
 
     # Left: Sub-bass & Bass register (20 Hz - 300 Hz) showing kick & sub pitch spikes
-    ax_sub.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.2, alpha=0.8)
-    ax_sub.semilogx(freqs_a, db_a, label="Phrase A (0 - 50%)", color="#ff9800", lw=0.9, alpha=0.7)
-    ax_sub.semilogx(freqs_b, db_b, label="Phrase B (50 - 100%)", color="#e91e63", lw=0.9, alpha=0.7)
+    ax_sub.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.5, alpha=0.9)
+    ax_sub.semilogx(freqs_a, db_a, label="Phrase A (0 - 50%)", color="#ff9800", lw=1.2, alpha=0.8)
+    ax_sub.semilogx(freqs_b, db_b, label="Phrase B (50 - 100%)", color="#e91e63", lw=1.2, alpha=0.8)
     ax_sub.set_xlim(20.0, 300.0)
     ax_sub.set_ylim(-80.0, max(0.0, float(np.max(db_total) + 6.0)))
     ax_sub.set_title("Sub-Bass Fundamental Peaks (20 - 300 Hz)")
     ax_sub.set_xlabel("Frequency (Hz)")
-    ax_sub.set_ylabel("Magnitude (dBFS)")
+    ax_sub.set_ylabel("Power (dBFS)")
     ax_sub.grid(True, which="both", alpha=0.25)
     ax_sub.legend(loc="upper right")
 
     # Right: Full Frequency Spectrum (20 Hz - 22.05 kHz) showing tonal tilt & high-end air
-    ax_full.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.2, alpha=0.8)
-    ax_full.semilogx(freqs_a, db_a, label="Phrase A", color="#ff9800", lw=0.8, alpha=0.6)
-    ax_full.semilogx(freqs_b, db_b, label="Phrase B", color="#e91e63", lw=0.8, alpha=0.6)
+    ax_full.semilogx(freqs_total, db_total, label="Full Signal", color="#00bcd4", lw=1.5, alpha=0.9)
+    ax_full.semilogx(freqs_a, db_a, label="Phrase A", color="#ff9800", lw=1.2, alpha=0.8)
+    ax_full.semilogx(freqs_b, db_b, label="Phrase B", color="#e91e63", lw=1.2, alpha=0.8)
     ax_full.set_xlim(20.0, fs / 2.0)
     ax_full.set_ylim(-90.0, max(0.0, float(np.max(db_total) + 6.0)))
     ax_full.set_title("Full Spectrum Tonal Balance (20 Hz - 22 kHz)")
     ax_full.set_xlabel("Frequency (Hz)")
-    ax_full.set_ylabel("Magnitude (dBFS)")
+    ax_full.set_ylabel("Power (dBFS)")
     ax_full.grid(True, which="both", alpha=0.25)
     ax_full.legend(loc="upper right")
 
     fig_fft.tight_layout()
     output_2 = mo.vstack([
-        mo.md("#### Exercise 2: Global vs. Phrase-Windowed FFT Analysis"),
+        mo.md("#### Exercise 2: Global vs. Phrase-Windowed Spectral Analysis"),
         mo.as_html(fig_fft),
     ])
     output_2
