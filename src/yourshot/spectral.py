@@ -12,6 +12,7 @@ import numpy as np
 import scipy.signal as signal
 
 from yourshot.spectral_data import (
+    CutoffDetectionAnalysis,
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
@@ -118,12 +119,14 @@ def compute_three_band_waveform(
 ) -> ThreeBandWaveformView:
     """Compute Pioneer Rekordbox 3-band amplitude envelopes (CDJ-3000 style).
 
-    Splits audio using 2nd-order Linkwitz-Riley/Butterworth crossover filters into:
+    Splits audio using 2nd-order Butterworth crossover filterbanks into:
     - Low Band: f < low_cutoff (Bass, < 250 Hz)
     - Mid Band: low_cutoff <= f < high_cutoff (Midrange, 250 Hz - 2.5 kHz)
     - High Band: f >= high_cutoff (Treble, >= 2.5 kHz)
 
     Then performs block-wise RMS pooling over windows of hop_length samples.
+    (Note: Standard Butterworth is optimal for envelope extraction; Linkwitz-Riley
+    is only required when summing filtered bands back into audible audio, as in Week 3).
 
     Args:
         audio: 1D NumPy array of audio samples.
@@ -173,3 +176,108 @@ def compute_three_band_waveform(
         mid=rms_mid.astype(np.float64),
         high=rms_high.astype(np.float64),
     )
+
+
+def analyze_spectral_cutoff(
+    audio: np.ndarray,
+    fs: int = 44100,
+    window_length: int = 2048,
+) -> CutoffDetectionAnalysis:
+    """Analyze high-frequency spectral roll-off and classify codec authenticity.
+
+    Examines the top register (10 kHz to Nyquist) using Welch PSD. Detects
+    brick-wall lowpass filters characteristic of lossy MP3 compression:
+    - ~16.0 kHz indicates ~128 kbps CBR (or YouTube web rip).
+    - ~18.5 kHz indicates ~192 kbps CBR.
+    - >= 20.0 kHz indicates genuine 320 kbps MP3 or lossless master.
+
+    Args:
+        audio: 1D monophonic float array of audio samples.
+        fs: Sampling rate in Hz (defaults to 44100).
+        window_length: FFT window length in samples (defaults to 2048).
+
+    Returns:
+        CutoffDetectionAnalysis with detected cutoff frequency, stopband metrics, and verdict.
+    """
+    nyquist = fs / 2.0
+    view = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
+    freqs = view.frequencies
+    power_db = view.power_db
+
+    # Edge case: Pure silence or DC offset
+    peak_power = float(np.max(power_db))
+    if peak_power < -85.0:
+        return CutoffDetectionAnalysis(
+            detected_cutoff_hz=0.0,
+            peak_shelf_db=peak_power,
+            noise_floor_db=peak_power,
+            stopband_attenuation_db=0.0,
+            verdict="Silent / Insufficient Audio Energy",
+            is_suspicious_transcode=False,
+            confidence=0.0,
+        )
+
+    # Reference band in the upper-mid passband: [11.0 kHz, 14.0 kHz]
+    ref_mask = (freqs >= 11000.0) & (freqs <= 14000.0)
+    ref_db = float(np.mean(power_db[ref_mask])) if np.any(ref_mask) else peak_power
+
+    # Inspection candidate region: [14.0 kHz, Nyquist]
+    test_mask = freqs >= 14000.0
+    test_freqs = freqs[test_mask]
+    test_power = power_db[test_mask]
+
+    # Roll-off threshold: drop of 10 dB relative to passband reference
+    # (Captures steep brick-wall lowpass transition before descending into noise floor)
+    drop_threshold_db = ref_db - 10.0
+    drop_indices = np.where(test_power <= drop_threshold_db)[0]
+
+    if len(drop_indices) == 0:
+        detected_cutoff = float(nyquist)
+        noise_floor = float(np.min(test_power))
+        attenuation = ref_db - noise_floor
+        is_suspicious = False
+    else:
+        first_drop_idx = int(drop_indices[0])
+        if first_drop_idx > 0:
+            f0, f1 = test_freqs[first_drop_idx - 1], test_freqs[first_drop_idx]
+            p0, p1 = test_power[first_drop_idx - 1], test_power[first_drop_idx]
+            frac = (drop_threshold_db - p0) / (p1 - p0) if abs(p1 - p0) > 1e-4 else 0.5
+            detected_cutoff = float(f0 + frac * (f1 - f0))
+        else:
+            detected_cutoff = float(test_freqs[0])
+
+        # Measure stopband attenuation in bins >= detected_cutoff + 1200 Hz
+        stop_mask = test_freqs >= (detected_cutoff + 1200.0)
+        if np.any(stop_mask):
+            noise_floor = float(np.mean(test_power[stop_mask]))
+        else:
+            noise_floor = float(test_power[-1])
+
+        attenuation = float(ref_db - noise_floor)
+        # Natural music roll-off is gradual (~15 dB drop). A lossy brick wall drops >= 28 dB.
+        is_suspicious = (detected_cutoff < 19500.0) and (attenuation >= 28.0)
+
+    # Assign Plain-English classification verdict
+    if detected_cutoff >= 20000.0 or not is_suspicious:
+        verdict = "Genuine Lossless / 320k"
+        confidence = 0.95
+    elif detected_cutoff < 17200.0:
+        verdict = "Likely 128k Transcode"
+        confidence = 0.92
+    elif detected_cutoff < 19500.0:
+        verdict = "Likely 192k Transcode"
+        confidence = 0.88
+    else:
+        verdict = "Low-Quality / Bandlimited"
+        confidence = 0.75
+
+    return CutoffDetectionAnalysis(
+        detected_cutoff_hz=float(detected_cutoff),
+        peak_shelf_db=float(ref_db),
+        noise_floor_db=float(noise_floor),
+        stopband_attenuation_db=float(attenuation),
+        verdict=verdict,
+        is_suspicious_transcode=is_suspicious,
+        confidence=float(confidence),
+    )
+

@@ -94,28 +94,32 @@ def load_dsp_modules():
     import numpy as np
     from scipy import signal
     import soundfile as sf
-    from yourshot.synth import apply_lossy_cutoff
+    from yourshot.synth import apply_lossy_cutoff, encode_mp3_lame
 
-    return apply_lossy_cutoff, io, np, plt, sf
+    return apply_lossy_cutoff, encode_mp3_lame, io, np, plt, sf
 
 
 @app.cell
 def load_plotting():
     from yourshot.spectral import (
+        analyze_spectral_cutoff,
         compute_welch_spectrum,
         compute_stft_spectrogram,
         compute_three_band_waveform,
     )
     from yourshot.plotting import (
+        plot_overlaid_welch_shelf,
         plot_welch_spectrum,
         plot_stft_spectrogram,
         plot_three_band_waveform,
     )
 
     return (
+        analyze_spectral_cutoff,
         compute_stft_spectrogram,
         compute_three_band_waveform,
         compute_welch_spectrum,
+        plot_overlaid_welch_shelf,
         plot_stft_spectrogram,
         plot_three_band_waveform,
         plot_welch_spectrum,
@@ -181,13 +185,14 @@ def build_controls(catalog, mo):
 
     codec_cutoff = mo.ui.dropdown(
         options={
-            "Lossless / Passthrough (22.05 kHz Nyquist)": 22050.0,
-            "~320 kbps MP3 (20.0 kHz shelf)": 20000.0,
-            "~192 kbps MP3 (18.5 kHz cutoff)": 18500.0,
-            "~128 kbps MP3 (16.0 kHz brick-wall)": 16000.0,
+            "Lossless Master (FLAC / WAV Passthrough)": 0,
+            "Real LAME MP3: 320 kbps (Club Standard)": 320,
+            "Real LAME MP3: 192 kbps (Mid-Tier Compression)": 192,
+            "Real LAME MP3: 128 kbps (Typical YouTube Rip)": 128,
+            "Real LAME MP3: 64 kbps (Extreme Bit-Starvation)": 64,
         },
-        value="~128 kbps MP3 (16.0 kHz brick-wall)",
-        label="Simulated Codec Cutoff",
+        value="Real LAME MP3: 128 kbps (Typical YouTube Rip)",
+        label="Simulated Codec Format (LAME MP3)",
     )
     return codec_cutoff, signal_selector_ex1, signal_selector_ex2
 
@@ -206,6 +211,7 @@ def make_analysis_tabs_helper(
     compute_welch_spectrum,
     io,
     mo,
+    plot_overlaid_welch_shelf,
     plot_stft_spectrogram,
     plot_three_band_waveform,
     plot_welch_spectrum,
@@ -292,7 +298,69 @@ def make_analysis_tabs_helper(
             "All Views (Stacked)": mo.vstack([card_wf, card_spec, card_stft], gap=1.5),
         })
 
-    return fig_to_image, render_analysis_tabs
+    def render_comparison_tabs(
+        audio_orig,
+        audio_filt,
+        fs,
+        cutoff_hz=None,
+        orig_label="Pristine Master",
+        filt_label="Filtered Audio",
+    ):
+        """Construct side-by-side and overlaid diagnostic tabs for codec before/after comparison."""
+        # 1. Overlaid High-Frequency Shelf (10–22 kHz)
+        spec_orig = compute_welch_spectrum(audio_orig, fs=fs).crop(f_min=10000.0, normalize_peak=True)
+        spec_filt = compute_welch_spectrum(audio_filt, fs=fs).crop(f_min=10000.0, normalize_peak=True)
+        fig_shelf, _ = plot_overlaid_welch_shelf(
+            spec_orig,
+            spec_filt,
+            cutoff_marker_hz=cutoff_hz,
+            title="High-Frequency Shelf: " + orig_label + " vs. " + filt_label,
+            orig_label=orig_label,
+            filt_label=filt_label,
+        )
+        fig_shelf.tight_layout()
+
+        # 2. Side-by-Side 2D Spectrograms (Filtered on Left, Pristine on Right)
+        stft_filt = compute_stft_spectrogram(audio_filt, fs=fs)
+        fig_stft_filt, _ = plot_stft_spectrogram(
+            stft_filt,
+            title=f"{filt_label} Spectrogram",
+            cutoff_marker_hz=cutoff_hz,
+        )
+        fig_stft_filt.tight_layout()
+
+        stft_orig = compute_stft_spectrogram(audio_orig, fs=fs)
+        fig_stft_orig, _ = plot_stft_spectrogram(
+            stft_orig,
+            title=f"{orig_label} Spectrogram",
+        )
+        fig_stft_orig.tight_layout()
+
+        img_shelf = fig_to_image(fig_shelf)
+        img_stft_side = mo.hstack(
+            [fig_to_image(fig_stft_filt), fig_to_image(fig_stft_orig)],
+            justify="space-between",
+            gap=1.5,
+        )
+
+        return mo.ui.tabs({
+            "High-Freq Shelf (Overlaid Inspector)": mo.vstack([
+                mo.md(
+                    "_Both curves plotted together on a linear scale (10–22.05 kHz). "
+                    "Notice the sharp drop into the noise floor on the filtered audio._"
+                ),
+                img_shelf,
+            ]),
+            "2D Spectrograms (Side-by-Side)": mo.vstack([
+                mo.md(
+                    "_Compare time-frequency heatmaps: **Filtered (Left)** vs. **Pristine (Right)**. "
+                    "Notice the horizontal cutoff void above the dashed marker line._"
+                ),
+                img_stft_side,
+            ]),
+        })
+
+    return render_analysis_tabs, render_comparison_tabs
 
 
 @app.cell
@@ -317,120 +385,71 @@ def exercise_1_analysis(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def exercise_2_codec_cutoff_simulation(
-    apply_lossy_cutoff,
     audio_ex2,
     codec_cutoff,
-    compute_stft_spectrogram,
-    compute_three_band_waveform,
-    compute_welch_spectrum,
-    fig_to_image,
+    encode_mp3_lame,
     fs,
     mo,
-    plot_stft_spectrogram,
-    plot_three_band_waveform,
-    plot_welch_spectrum,
+    render_comparison_tabs,
     signal_selector_ex2,
 ):
-    _cutoff_hz = codec_cutoff.value if codec_cutoff.value < 22000.0 else None
-    _filtered = apply_lossy_cutoff(audio_ex2, cutoff_hz=codec_cutoff.value, fs=fs)
+    _bitrate = int(codec_cutoff.value)
+    _encoded = encode_mp3_lame(audio_ex2, fs=fs, bitrate_kbps=_bitrate) if _bitrate > 0 else audio_ex2.copy()
+    _cutoff_hz = {320: 20500.0, 192: 18500.0, 128: 16000.0}.get(_bitrate, None)
+    _filt_label = f"MP3 ({_bitrate} kbps)" if _bitrate > 0 else "Lossless Passthrough"
 
     # 1. Audio Players Side-by-Side
     _player_orig = mo.audio(audio_ex2, rate=fs)
-    _player_filt = mo.audio(_filtered, rate=fs)
+    _player_filt = mo.audio(_encoded, rate=fs)
+    _players_row = mo.hstack([
+        mo.vstack([mo.md("**Pristine (Lossless Master)**"), _player_orig], gap=0.4),
+        mo.vstack([mo.md(f"**{_filt_label}**"), _player_filt], gap=0.4),
+    ], justify="space-around", gap=2.0)
 
-    _orig_player_card = mo.vstack([
-        mo.md("**Pristine (Lossless Master)**"),
-        _player_orig,
-    ], gap=0.5)
-
-    _filt_player_card = mo.vstack([
-        mo.md(f"**Codec Filtered ({codec_cutoff.value / 1000.0:.1f} kHz)**"),
-        _player_filt,
-    ], gap=0.5)
-
-    _players_row = mo.hstack([_orig_player_card, _filt_player_card], justify="space-around", gap=2)
-
-    # 2. Side-by-Side Forensic Shelf Comparison (10 kHz to Nyquist)
-    _spec_orig = compute_welch_spectrum(audio_ex2, fs=fs)
-    _shelf_orig = _spec_orig.crop(f_min=10000.0, normalize_peak=True)
-    _fig_shelf_orig, _ = plot_welch_spectrum(
-        _shelf_orig,
-        log_freq=False,
-        title="Pristine High-Frequency Shelf (10–22 kHz)",
-        cutoff_marker_hz=None,
-    )
-    _fig_shelf_orig.tight_layout()
-
-    _spec_filt = compute_welch_spectrum(_filtered, fs=fs)
-    _shelf_filt = _spec_filt.crop(f_min=10000.0, normalize_peak=True)
-    _fig_shelf_filt, _ = plot_welch_spectrum(
-        _shelf_filt,
-        log_freq=False,
-        title=f"Filtered Shelf ({codec_cutoff.value / 1000.0:.1f} kHz Cutoff)",
-        cutoff_marker_hz=_cutoff_hz,
-    )
-    _fig_shelf_filt.tight_layout()
-
-    _shelf_side_by_side = mo.hstack(
-        [fig_to_image(_fig_shelf_orig), fig_to_image(_fig_shelf_filt)],
-        justify="space-between",
-        gap=1.5,
+    # 2. Honest Educational Callout
+    _callout_note = mo.md(
+        "> #### 🔍 The Psychoacoustic Paradox: Why It Sounds Fine Here (And Fails in the Booth)\n"
+        ">\n"
+        "> **1. The Auditory Illusion on Headphones:**\n"
+        "> Switch between **Lossless Master** and **128 kbps** above and listen carefully. "
+        "On music tracks like *Persistence*, you will struggle to hear any difference. "
+        "That is not a defect in your hearing—it is proof of how effective MP3 psychoacoustic masking is at moderate listening volumes. "
+        "In finished master tracks, energy above 16 kHz is already ~28 dB quieter than the drums and bass (< 0.1% of total power), "
+        "and consumer headphones roll off naturally.\n"
+        ">\n"
+        "> **2. What the Microscope Sees:**\n"
+        "> Look at the **High-Freq Shelf** and **2D Spectrogram** tabs below. While your ears cannot detect the cut, "
+        "the spectral math proves that **every harmonic above 16 kHz has been permanently erased** from the MP3 file.\n"
+        ">\n"
+        "> **3. The Club Sound System Liability:**\n"
+        "> Audio fidelity is an **invisible liability**. In a bedroom on AirPods, a 128 kbps YouTube rip sounds passable. "
+        "But when that same file hits a **105 dB SPL club sound system with high-compression horn tweeters**, "
+        "missing top-end air causes acoustic fatigue, transients lose punch, and mixing against pristine tracks exposes a jarring drop in energy. "
+        "If you key-shift or time-stretch the track on a CDJ, the missing phase information creates robotic artifacts.\n"
+        ">\n"
+        "> **The DJ Rule of Thumb**: *Never audit audio quality with your ears. Ears adapt and deceive; spectral analysis does not.*"
     )
 
-    # 3. Side-by-Side Waveform Comparison
-    _wf_orig = compute_three_band_waveform(audio_ex2, fs=fs)
-    _fig_wf_orig, _ = plot_three_band_waveform(_wf_orig, title="Pristine 3-Band Waveform")
-    _fig_wf_orig.tight_layout()
-
-    _wf_filt = compute_three_band_waveform(_filtered, fs=fs)
-    _fig_wf_filt, _ = plot_three_band_waveform(_wf_filt, title=f"Filtered 3-Band Waveform ({codec_cutoff.value / 1000.0:.1f} kHz)")
-    _fig_wf_filt.tight_layout()
-
-    _wf_side_by_side = mo.hstack(
-        [fig_to_image(_fig_wf_orig), fig_to_image(_fig_wf_filt)],
-        justify="space-between",
-        gap=1.5,
+    # 3. Side-by-Side and Overlaid Analytical Tabs (via helper)
+    _tabs = render_comparison_tabs(
+        audio_orig=audio_ex2,
+        audio_filt=_encoded,
+        fs=fs,
+        cutoff_hz=_cutoff_hz,
+        orig_label="Lossless Master",
+        filt_label=_filt_label,
     )
-
-    # 4. Side-by-Side Spectrogram Comparison
-    _stft_orig = compute_stft_spectrogram(audio_ex2, fs=fs)
-    _fig_stft_orig, _ = plot_stft_spectrogram(_stft_orig, title="Pristine 2D Spectrogram")
-    _fig_stft_orig.tight_layout()
-
-    _stft_filt = compute_stft_spectrogram(_filtered, fs=fs)
-    _fig_stft_filt, _ = plot_stft_spectrogram(_stft_filt, title=f"Filtered 2D Spectrogram ({codec_cutoff.value / 1000.0:.1f} kHz)", cutoff_marker_hz=_cutoff_hz)
-    _fig_stft_filt.tight_layout()
-
-    _stft_side_by_side = mo.hstack(
-        [fig_to_image(_fig_stft_orig), fig_to_image(_fig_stft_filt)],
-        justify="space-between",
-        gap=1.5,
-    )
-
-    _comparison_tabs = mo.ui.tabs({
-        "High-Freq Shelf (Cliff Inspector)": mo.vstack([
-            mo.md("_Compare the top octave (10–22 kHz). Observe how lossy filtering creates an unnatural steep cliff._"),
-            _shelf_side_by_side,
-        ]),
-        "CDJ 3-Band Waveforms": mo.vstack([
-            mo.md("_Compare amplitude envelopes. Notice how the blue high-frequency layer shrinks after the cutoff._"),
-            _wf_side_by_side,
-        ]),
-        "2D Spectrograms": mo.vstack([
-            mo.md("_Compare time-frequency heatmaps. Notice the horizontal cutoff void above the green cutoff line._"),
-            _stft_side_by_side,
-        ]),
-    })
 
     _controls_row = mo.hstack([signal_selector_ex2, codec_cutoff], justify="start", gap=2)
 
     output_2 = mo.vstack([
-        mo.md("#### Exercise 2: Codec Cutoff Filtering (Before vs. After Comparison)"),
+        mo.md("#### Exercise 2: Real MP3 Codec Encoding (LAME Bitrate Comparison)"),
         _controls_row,
         _players_row,
-        _comparison_tabs,
+        _callout_note,
+        _tabs,
     ], gap=1.4)
 
     output_2
@@ -504,19 +523,12 @@ def build_upload_window_slider(mo, np, total_duration_sec):
 
 @app.cell(hide_code=True)
 def exercise_3_upload_inspector(
+    analyze_spectral_cutoff,
     apply_lossy_cutoff,
     audio_uploader,
-    compute_stft_spectrogram,
-    compute_three_band_waveform,
-    compute_welch_spectrum,
-    fig_to_image,
-    io,
     mo,
     mono_audio,
-    plot_stft_spectrogram,
-    plot_three_band_waveform,
-    plot_welch_spectrum,
-    sf,
+    render_comparison_tabs,
     total_duration_sec,
     upload_cutoff,
     upload_fs,
@@ -528,8 +540,8 @@ def exercise_3_upload_inspector(
             audio_uploader,
             mo.md(
                 "_Upload any audio file from your personal collection above. "
-                "The lab will render its CDJ 3-band waveform, 20 Hz–22 kHz power spectrum, "
-                "STFT spectrogram, and forensic high-frequency shelf, with optional side-by-side codec filtering._"
+                "The lab will render its high-frequency shelf, 2D spectrogram, "
+                "and run an automated cutoff detection audit to verify its authenticity._"
             ),
         ], gap=1.2)
     else:
@@ -554,96 +566,50 @@ def exercise_3_upload_inspector(
             else analyzed_orig
         )
 
-        # 1. Convert audio slices to 16-bit PCM for snappy players
-        def _to_pcm_audio(sig):
-            buf = io.BytesIO()
-            sf.write(buf, sig, upload_fs, format="WAV", subtype="PCM_16")
-            buf.seek(0)
-            return mo.audio(buf.read())
+        # Automated Spectral Cutoff Detection Analysis on the uploaded audio
+        analysis = analyze_spectral_cutoff(analyzed_orig, fs=upload_fs)
 
-        _player_orig = _to_pcm_audio(analyzed_orig)
-        _player_filt = _to_pcm_audio(analyzed_filt)
+        if analysis.is_suspicious_transcode:
+            badge_color = "#f44336"  # Red alert
+            icon = "⚠️"
+        else:
+            badge_color = "#4caf50"  # Green pass
+            icon = "✅"
+
+        verdict_card = mo.md(
+            f"""
+            <div style="border: 2px solid {badge_color}; border-radius: 8px; padding: 12px 18px; margin: 8px 0; background-color: rgba(0,0,0,0.03);">
+                <div style="font-size: 1.15em; font-weight: bold; color: {badge_color};">
+                    {icon} Automated Quality Verdict: {analysis.verdict}
+                </div>
+                <div style="margin-top: 6px; font-size: 0.95em;">
+                    • <b>Detected High-Frequency Cutoff:</b> <code>{analysis.detected_cutoff_hz:,.0f} Hz</code><br>
+                    • <b>Stopband Attenuation:</b> <code>{analysis.stopband_attenuation_db:.1f} dB</code><br>
+                    • <b>Confidence:</b> <code>{analysis.confidence * 100:.0f}%</code>
+                </div>
+                <div style="margin-top: 6px; font-size: 0.85em; color: #666;">
+                    {"<b>Warning:</b> Spectral energy plummets into the noise floor below 19.5 kHz. Despite container metadata claiming high quality, this audio source was permanently bandlimited." if analysis.is_suspicious_transcode else "<b>Verified:</b> Spectral harmonics extend cleanly into the 20+ kHz register without unnatural brick-wall roll-off."}
+                </div>
+            </div>
+            """
+        )
+
+        _player_orig = mo.audio(analyzed_orig, rate=upload_fs)
+        _player_filt = mo.audio(analyzed_filt, rate=upload_fs)
 
         _players_row = mo.hstack([
-            mo.vstack([mo.md(f"**As Uploaded (`{audio_uploader.name}`)**"), _player_orig], gap=0.5),
-            mo.vstack([mo.md(f"**With Simulated Cutoff ({upload_cutoff.value / 1000.0:.1f} kHz)**"), _player_filt], gap=0.5),
-        ], justify="space-around", gap=2)
+            mo.vstack([mo.md(f"**As Uploaded (`{audio_uploader.name}`)**"), _player_orig], gap=0.4),
+            mo.vstack([mo.md(f"**With Simulated Cutoff ({upload_cutoff.value / 1000.0:.1f} kHz)**" if _is_filtered else "**Cutoff (None)**"), _player_filt], gap=0.4),
+        ], justify="space-around", gap=2.0)
 
-        # 2. Side-by-Side Forensic Shelf Comparison (10 kHz to Nyquist)
-        _spec_orig = compute_welch_spectrum(analyzed_orig, fs=upload_fs)
-        _shelf_orig = _spec_orig.crop(f_min=10000.0, normalize_peak=True)
-        _fig_shelf_orig, _ = plot_welch_spectrum(
-            _shelf_orig,
-            log_freq=False,
-            title="As Uploaded Shelf (10–Nyquist)",
-            cutoff_marker_hz=None,
+        _tabs = render_comparison_tabs(
+            audio_orig=analyzed_orig,
+            audio_filt=analyzed_filt,
+            fs=upload_fs,
+            cutoff_hz=_cutoff_hz,
+            orig_label="As Uploaded",
+            filt_label=f"Cutoff ({upload_cutoff.value / 1000.0:.1f} kHz)" if _is_filtered else "Filtered",
         )
-        _fig_shelf_orig.tight_layout()
-
-        _spec_filt = compute_welch_spectrum(analyzed_filt, fs=upload_fs)
-        _shelf_filt = _spec_filt.crop(f_min=10000.0, normalize_peak=True)
-        _fig_shelf_filt, _ = plot_welch_spectrum(
-            _shelf_filt,
-            log_freq=False,
-            title=f"Filtered Shelf ({upload_cutoff.value / 1000.0:.1f} kHz)",
-            cutoff_marker_hz=_cutoff_hz,
-        )
-        _fig_shelf_filt.tight_layout()
-
-        _shelf_side_by_side = mo.hstack(
-            [fig_to_image(_fig_shelf_orig), fig_to_image(_fig_shelf_filt)],
-            justify="space-between",
-            gap=1.5,
-        )
-
-        # 3. Side-by-Side 3-Band Waveforms
-        _wf_orig = compute_three_band_waveform(analyzed_orig, fs=upload_fs)
-        _fig_wf_orig, _ = plot_three_band_waveform(_wf_orig, title="As Uploaded Waveform")
-        _fig_wf_orig.tight_layout()
-
-        _wf_filt = compute_three_band_waveform(analyzed_filt, fs=upload_fs)
-        _fig_wf_filt, _ = plot_three_band_waveform(_wf_filt, title=f"Filtered Waveform ({upload_cutoff.value / 1000.0:.1f} kHz)")
-        _fig_wf_filt.tight_layout()
-
-        _wf_side_by_side = mo.hstack(
-            [fig_to_image(_fig_wf_orig), fig_to_image(_fig_wf_filt)],
-            justify="space-between",
-            gap=1.5,
-        )
-
-        # 4. Side-by-Side 2D Spectrograms
-        _stft_orig = compute_stft_spectrogram(analyzed_orig, fs=upload_fs)
-        _fig_stft_orig, _ = plot_stft_spectrogram(_stft_orig, title="As Uploaded Spectrogram")
-        _fig_stft_orig.tight_layout()
-
-        _stft_filt = compute_stft_spectrogram(analyzed_filt, fs=upload_fs)
-        _fig_stft_filt, _ = plot_stft_spectrogram(_stft_filt, title=f"Filtered Spectrogram ({upload_cutoff.value / 1000.0:.1f} kHz)", cutoff_marker_hz=_cutoff_hz)
-        _fig_stft_filt.tight_layout()
-
-        _stft_side_by_side = mo.hstack(
-            [fig_to_image(_fig_stft_orig), fig_to_image(_fig_stft_filt)],
-            justify="space-between",
-            gap=1.5,
-        )
-
-        _comparison_tabs = mo.ui.tabs({
-            "High-Freq Shelf (Cliff Inspector)": mo.vstack([
-                mo.md(
-                    "_Inspect the region between 15 kHz and 22 kHz. "
-                    "If your uploaded file already exhibits a steep drop at **16 kHz** or **18.5 kHz**, "
-                    "it is an upscaled lossy transcode regardless of its file format!_"
-                ),
-                _shelf_side_by_side,
-            ]),
-            "CDJ 3-Band Waveforms": mo.vstack([
-                mo.md("_Compare amplitude envelopes. Notice how the blue high-frequency layer contracts after cutoff._"),
-                _wf_side_by_side,
-            ]),
-            "2D Spectrograms": mo.vstack([
-                mo.md("_Compare time-frequency heatmaps to inspect transient preservation and cutoff voids._"),
-                _stft_side_by_side,
-            ]),
-        })
 
         file_info = mo.md(
             f"**File:** `{audio_uploader.name}` &nbsp;|&nbsp; "
@@ -660,8 +626,9 @@ def exercise_3_upload_inspector(
             mo.md("#### Exercise 3: Inspect Your Own Track (Transcode Forensic Audit)"),
             mo.vstack(controls, gap=1.0),
             file_info,
+            verdict_card,
             _players_row,
-            _comparison_tabs,
+            _tabs,
         ], gap=1.4)
 
     output_3
@@ -671,17 +638,17 @@ def exercise_3_upload_inspector(
 @app.cell(hide_code=True)
 def render_translation_table(mo):
     mo.md(r"""
-    ### 1.6 Week 1 Vocabulary: Perceptual Symptoms of a "Fake 320" vs. DSP Reality
+    ## Part 3: DJ vs. DSP Vocabulary & Visual Translation Guide
 
-    When a DJ plays a low-bitrate stream or YouTube rip that was upscaled into a fake 320 kbps MP3 or WAV, they don't see the algorithm—they hear specific acoustic symptoms on a high-SPL club sound system.
+    In this lab, we computed three distinct mathematical projections of audio signals. A DJ looking at a CDJ screen or prep software sees familiar musical tools, while a DSP engineer sees filterbanks and Fourier transforms.
 
-    | DJ Perceptual Description | Domain | The Physical DSP Phenomenon |
-    |---|---|---|
-    | **"Muffled / Boxy / No Air"** | Frequency Domain | **Brick-wall lowpass cutoff ($f_c \le 16.0\text{ kHz}$)**: Encoders conserve bit budget by discarding the top octave ($16\text{–}22.05\text{ kHz}$). High harmonics of cymbals, snare sizzle, and vocal breath are completely eliminated. |
-    | **"Mushy Kick / Lost Transient Punch"** | Time Domain | **MDCT temporal pre-echo**: Quantization noise spreads backward ~20 ms before the sharp transient inside the 1152-sample transform window, softening the initial attack of kicks and snares. |
-    | **"Lacks Energy / Falls Flat in the Mix"** | Psychoacoustic Loudness | **Spectral energy depletion**: Stripping upper harmonics and aggressive psychoacoustic masking reduces perceived RMS loudness (ITU-R BS.1770 curve), making the track feel weak compared to legitimate masters. |
+    Use this table to connect the physical math to DJ booth practice, and discuss the open terminology with your YourShot instructor during your 1-on-1 session.
 
-    *(Note: Validate these perceptual terms with your YourShot instructor during your 1-on-1 session.)*
+    | DJ Concept / Terminology | Domain | Physical DSP Implementation | Question to Validate with Instructor |
+    |---|---|---|---|
+    | **"3-Band RGB Waveform"** *(The Lows, Mids, & Highs)* | Time Domain (Colored Envelope) | **3-Band Butterworth IIR Filterbank + RMS Envelope Pooling**: Audio is split into Low (<250 Hz, Cyan), Mid (250–2500 Hz, Amber), and High (>=2500 Hz, Blue), followed by 256-sample RMS envelope pooling. *(Note: Because the blue band spans 2.5–22.05 kHz, a 16 kHz cutoff barely changes the blue height, making CDJ screens blind to fake transcodes).* | *"Does this 3-color envelope separation match what you look for when reading drops and breakdowns on a CDJ-3000 screen?"* |
+    | *[DJ Term: Tonal Balance / Master EQ Curve]* | Frequency Domain (1D Curve) | **Welch Averaged Power Spectral Density (PSD)**: Multi-window Fourier analysis ($N=2048$, Hann window, 75% overlap) averaged over time and plotted on a musical log-frequency scale (20 Hz to 22.05 kHz). | *"When DJs or mastering engineers evaluate the overall tonal balance (sub-bass vs. treble tilt) of a track, what do you usually call this full-frequency curve?"* |
+    | *[DJ Term: Spek View / Transcode Heatmap]* | Joint Time-Frequency Domain (2D Heatmap) | **2D Short-Time Fourier Transform (STFT)**: Sliding window FFT mapping time (x-axis) vs. frequency bins up to 22.05 kHz (y-axis), with color intensity indicating decibel power (dBFS). Clearly reveals horizontal cutoff voids. | *"Have you or fellow DJs used software like Spek to check for fake 320 kbps files? What term do you and other selectors use for this frequency-time heatmap?"* |
     """)
     return
 

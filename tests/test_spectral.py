@@ -16,12 +16,14 @@ import numpy as np
 import pytest
 
 from yourshot.spectral_data import (
+    CutoffDetectionAnalysis,
     RGBBlendedWaveformView,
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
 )
 from yourshot.spectral import (
+    analyze_spectral_cutoff,
     compute_stft_spectrogram,
     compute_three_band_waveform,
     compute_welch_spectrum,
@@ -158,6 +160,51 @@ def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, c
         freq_hz=freq_hz,
         channel_name=channel_name,
     )
+
+
+def test_cutoff_detection_pristine_wideband():
+    """Wideband noise or high-register chirp extending to 20k+ must yield >= 20 kHz cutoff and Genuine verdict."""
+    from yourshot.synth import generate_white_noise
+    fs = 44100
+    noise = generate_white_noise(duration_sec=2.0, fs=fs)
+    analysis = analyze_spectral_cutoff(noise, fs=fs)
+
+    assert isinstance(analysis, CutoffDetectionAnalysis)
+    assert analysis.detected_cutoff_hz >= 20000.0
+    assert analysis.verdict == "Genuine Lossless / 320k"
+    assert not analysis.is_suspicious_transcode
+
+
+@pytest.mark.parametrize(
+    "simulated_cutoff, expected_verdict, expected_range",
+    [
+        (16000.0, "Likely 128k Transcode", (15500.0, 16800.0)),
+        (18500.0, "Likely 192k Transcode", (18000.0, 19200.0)),
+    ],
+)
+def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected_verdict: str, expected_range: Tuple[float, float]):
+    """Lowpass-filtered signals must accurately identify the cutoff frequency and flag as suspicious transcode."""
+    from yourshot.synth import apply_lossy_cutoff, generate_white_noise
+    fs = 44100
+    noise = generate_white_noise(duration_sec=2.0, fs=fs)
+    filtered = apply_lossy_cutoff(noise, cutoff_hz=simulated_cutoff, fs=fs, order=10)
+
+    analysis = analyze_spectral_cutoff(filtered, fs=fs)
+
+    assert analysis.is_suspicious_transcode
+    assert analysis.verdict == expected_verdict
+    assert expected_range[0] <= analysis.detected_cutoff_hz <= expected_range[1]
+    assert analysis.stopband_attenuation_db >= 30.0
+
+
+def test_cutoff_detection_silence_edge_case():
+    """Silent or near-silent signals must not crash and should classify gracefully."""
+    fs = 44100
+    silence = np.zeros(fs * 2, dtype=np.float32)
+    analysis = analyze_spectral_cutoff(silence, fs=fs)
+
+    assert isinstance(analysis, CutoffDetectionAnalysis)
+    assert analysis.confidence <= 0.2
 
 
 # ---------------------------------------------------------------------------

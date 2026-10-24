@@ -60,6 +60,39 @@ def generate_chirp(
     return sweep.astype(np.float32)
 
 
+def generate_linear_chirp(
+    duration_sec: float = 4.0,
+    fs: int = 44100,
+    f_start: float = 10000.0,
+    f_end: float = 20000.0,
+) -> np.ndarray:
+    """Generate a linear frequency sweep across the top register (e.g. 10 kHz to 20 kHz).
+
+    Unlike a logarithmic full-band chirp, a linear sweep in the top register
+    spends substantial time traversing each frequency, making brick-wall
+    codec cutoffs (like 16 kHz) cleanly audible as abrupt silence halfway through.
+
+    Args:
+        duration_sec: Signal duration in seconds.
+        fs: Sampling rate in Hz.
+        f_start: Starting frequency in Hz (default: 10 kHz).
+        f_end: Ending frequency in Hz (default: 20 kHz).
+
+    Returns:
+        1D NumPy float32 array normalized to [-1.0, 1.0].
+    """
+    t = time_samples_for_frequency(duration_sec, fs)
+    sweep = signal.chirp(
+        t,
+        f0=f_start,
+        t1=duration_sec,
+        f1=f_end,
+        method="linear",
+    )
+    sweep *= 0.5
+    return sweep.astype(np.float32)
+
+
 def generate_drum_loop(
     duration_sec: float = 3.0,
     bpm: float = 128.0,
@@ -168,6 +201,215 @@ def apply_lossy_cutoff(
     sos = signal.butter(order, cutoff_hz, btype="lowpass", fs=fs, output="sos")
     filtered = signal.sosfilt(sos, audio)
     return np.clip(filtered, -1.0, 1.0).astype(np.float32)
+
+
+def apply_high_shelf_boost(
+    audio: np.ndarray,
+    fs: int = 44100,
+    f_shelf_hz: float = 10000.0,
+    gain_db: float = 10.0,
+) -> np.ndarray:
+    """Simulate a DJ mixer High-EQ knob boost (+10 dB shelf at 10 kHz).
+
+    Audio EQ cookbook high-shelf biquad filter.
+    On pristine audio, boosts open air and cymbal brilliance.
+    On lowpass-filtered audio, amplifies harsh upper-mid sibilance into an unnatural dead drop.
+
+    Args:
+        audio: 1D input audio array.
+        fs: Sampling rate in Hz.
+        f_shelf_hz: Center frequency for the shelf in Hz (default 10 kHz).
+        gain_db: Gain in decibels (default +10 dB).
+
+    Returns:
+        1D NumPy float32 array normalized to prevent digital clipping.
+    """
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * f_shelf_hz / fs
+    cos_w0 = np.cos(w0)
+    sin_w0 = np.sin(w0)
+    alpha = sin_w0 / 2.0 * np.sqrt(2.0)
+
+    b0 = A * ((A + 1) + (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha)
+    b1 = -2 * A * ((A - 1) + (A + 1) * cos_w0)
+    b2 = A * ((A + 1) + (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha)
+    a0 = (A + 1) - (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha
+    a1 = 2 * ((A - 1) - (A + 1) * cos_w0)
+    a2 = (A + 1) - (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha
+
+    b = np.array([b0, b1, b2]) / a0
+    a = np.array([a0, a1, a2]) / a0
+    boosted = signal.lfilter(b, a, audio).astype(np.float32)
+
+    peak = float(np.max(np.abs(boosted)))
+    if peak > 0.95:
+        boosted = (boosted / peak * 0.95).astype(np.float32)
+    return boosted
+
+
+def encode_mp3_lame(
+    audio: np.ndarray,
+    fs: int = 44100,
+    bitrate_kbps: int = 128,
+) -> np.ndarray:
+    """Encode audio through genuine LAME MP3 encoder via ffmpeg to introduce real lossy artifacts.
+
+    Unlike a synthetic lowpass filter, real MP3 encoding introduces:
+    - Psychoacoustic bit allocation & perceptual quantization noise
+    - Transient smearing and MDCT pre-echo before sharp hits
+    - Intensity stereo mono-collapse and phase aliasing in upper registers
+    - LAME lowpass filter profiles matched to target bitrate
+
+    Falls back to apply_lossy_cutoff if ffmpeg is not available on the host system.
+
+    Args:
+        audio: 1D monophonic float32 input array.
+        fs: Sampling rate in Hz.
+        bitrate_kbps: Target MP3 CBR bitrate in kbps (e.g. 64, 96, 128, 192, 320).
+
+    Returns:
+        1D NumPy float32 array normalized to [-1.0, 1.0].
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    import soundfile as sf
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if ffmpeg_bin is None:
+        # Fallback to pure digital lowpass cutoff if ffmpeg is not installed
+        cutoff_map = {64: 11000.0, 96: 14000.0, 128: 16000.0, 192: 18500.0, 320: 20000.0}
+        fc = cutoff_map.get(bitrate_kbps, 16000.0)
+        return apply_lossy_cutoff(audio, cutoff_hz=fc, fs=fs)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f_in, \
+         tempfile.NamedTemporaryFile(suffix=".mp3") as f_mp3, \
+         tempfile.NamedTemporaryFile(suffix=".wav") as f_out:
+
+        # Real DJ tracks and YouTube rips are 2-channel stereo.
+        # Duplicating mono to stereo ensures LAME allocates standard per-channel bit budgets
+        # (e.g. 128 kbps stereo = 64 kbps/channel, triggering the classic 16.0 kHz brick-wall lowpass).
+        if audio.ndim == 1:
+            stereo_audio = np.column_stack([audio, audio])
+        else:
+            stereo_audio = audio
+
+        sf.write(f_in.name, stereo_audio, fs, subtype="PCM_16")
+
+        # Encode to MP3 CBR in stereo
+        cmd_enc = [
+            ffmpeg_bin, "-y", "-loglevel", "error",
+            "-i", f_in.name,
+            "-codec:a", "libmp3lame",
+            "-b:a", f"{bitrate_kbps}k",
+            f_mp3.name,
+        ]
+        subprocess.run(cmd_enc, capture_output=True, check=True)
+
+        # Decode back to uncompressed PCM float32 WAV (mono output)
+        cmd_dec = [
+            ffmpeg_bin, "-y", "-loglevel", "error",
+            "-i", f_mp3.name,
+            "-ar", str(fs),
+            "-ac", "1",
+            f_out.name,
+        ]
+        subprocess.run(cmd_dec, capture_output=True, check=True)
+
+        decoded, _ = sf.read(f_out.name, dtype="float32")
+
+        # Align length to original input
+        orig_len = len(audio)
+        if len(decoded) > orig_len:
+            decoded = decoded[:orig_len]
+        elif len(decoded) < orig_len:
+            decoded = np.pad(decoded, (0, orig_len - len(decoded)))
+
+        return np.clip(decoded, -1.0, 1.0).astype(np.float32)
+
+
+def encode_multigen_mp3(
+    audio: np.ndarray,
+    fs: int = 44100,
+    bitrate_kbps: int = 128,
+    generations: int = 3,
+) -> np.ndarray:
+    """Pass audio through multiple successive real LAME MP3 encode/decode cycles.
+
+    Simulates generation loss from repeated ripping, transcoding, and re-uploading
+    (e.g. Master -> YouTube 128k -> Web Ripper 128k -> Re-encoded Library MP3).
+    Each pass compounds MDCT frame boundary phase drift and quantization noise.
+
+    Args:
+        audio: 1D input array.
+        fs: Sampling rate in Hz.
+        bitrate_kbps: Bitrate per generation.
+        generations: Number of successive transcode passes (typically 3 to 5).
+
+    Returns:
+        1D NumPy float32 array after N generations.
+    """
+    current = audio
+    for _ in range(generations):
+        current = encode_mp3_lame(current, fs=fs, bitrate_kbps=bitrate_kbps)
+    return current
+
+
+def apply_venue_master_limiter(
+    audio: np.ndarray,
+    fs: int = 44100,
+    threshold_db: float = -18.0,
+    ratio: float = 8.0,
+    makeup_db: float = 14.0,
+) -> np.ndarray:
+    """Simulate a club venue master processor / limiter with heavy makeup gain.
+
+    Applies fast dynamic peak compression followed by makeup gain and soft analog-style
+    saturation. On pristine audio, dynamics remain punchy and clean. On lossy audio,
+    the limiter drags up low-level quantization noise and pre-echo into plain audibility.
+
+    Args:
+        audio: 1D input array.
+        fs: Sampling rate in Hz.
+        threshold_db: Compression threshold in dBFS (default -18 dBFS).
+        ratio: Compression ratio (default 8:1).
+        makeup_db: Makeup gain in dB (default +14 dB).
+
+    Returns:
+        1D NumPy float32 array normalized to [-1.0, 1.0].
+    """
+    attack_time = 0.002   # 2 ms fast limiter attack
+    release_time = 0.080  # 80 ms release
+    alpha_a = float(np.exp(-1.0 / (attack_time * fs)))
+    alpha_r = float(np.exp(-1.0 / (release_time * fs)))
+
+    abs_audio = np.abs(audio)
+    env = np.zeros_like(audio)
+    curr = 0.0
+    for i in range(len(audio)):
+        val = abs_audio[i]
+        curr = alpha_a * curr + (1.0 - alpha_a) * val if val > curr else alpha_r * curr + (1.0 - alpha_r) * val
+        env[i] = curr
+
+    env_db = 20.0 * np.log10(np.maximum(env, 1e-5))
+    gain_reduction_db = np.zeros_like(env_db)
+    over = env_db > threshold_db
+    gain_reduction_db[over] = (env_db[over] - threshold_db) * (1.0 - 1.0 / ratio)
+
+    total_gain_db = makeup_db - gain_reduction_db
+    gain = 10.0 ** (total_gain_db / 20.0)
+
+    compressed = audio * gain
+    # Soft saturation ceiling to avoid harsh digital clipping
+    output = np.tanh(compressed).astype(np.float32)
+    peak = float(np.max(np.abs(output)))
+    if peak > 0:
+        output = (output / peak * 0.95).astype(np.float32)
+    return output
+
+
+
+
 
 def time_samples_for_frequency(duration_sec: float, fs: int) -> np.ndarray:
     """Return sampled time points [0, duration_sec) spaced at the sampling frequency fs.

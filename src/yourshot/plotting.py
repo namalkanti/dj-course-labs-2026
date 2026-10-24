@@ -202,3 +202,86 @@ def plot_stft_spectrogram(
     cbar.ax.tick_params(labelsize=9)
 
     return fig, ax
+
+
+def plot_overlaid_welch_shelf(
+    view_orig: SpectrumView,
+    view_filt: SpectrumView,
+    ax: Optional[plt.Axes] = None,
+    figsize: Tuple[float, float] = (11.0, 4.0),
+    title: str = "High-Frequency Shelf: Pristine vs. Filtered (10–22 kHz)",
+    cutoff_marker_hz: Optional[float] = None,
+    orig_label: str = "Pristine Master",
+    filt_label: str = "Filtered Audio",
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Render pristine vs filtered Welch power spectra overlaid on the same linear frequency axes.
+
+    Designed for top-octave forensic roll-off comparison without requiring side-by-side split screens.
+
+    Args:
+        view_orig: SpectrumView for original/pristine audio (cropped to high shelf).
+        view_filt: SpectrumView for filtered/test audio (cropped to high shelf).
+        ax: Existing Matplotlib Axes. If None, creates a new figure.
+        figsize: Canvas size in inches when creating a new figure.
+        title: Plot title string.
+        cutoff_marker_hz: Optional cutoff frequency in Hz to mark with a vertical dashed line.
+        orig_label: Legend label for the pristine trace.
+        filt_label: Legend label for the filtered trace.
+
+    Returns:
+        Tuple of (Figure, Axes).
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    f_orig_khz = view_orig.frequencies / 1000.0
+    f_filt_khz = view_filt.frequencies / 1000.0
+
+    # Pristine: Slate blue / cyan background reference
+    ax.plot(
+        f_orig_khz,
+        view_orig.power_db,
+        color="#78909c",
+        lw=2.0,
+        alpha=0.85,
+        label=orig_label,
+    )
+
+    # Filtered: Distinct orange/coral trace
+    ax.plot(
+        f_filt_khz,
+        view_filt.power_db,
+        color=REKORDBOX_ORANGE,
+        lw=2.0,
+        alpha=0.95,
+        label=filt_label,
+    )
+
+    f_min_khz = float(min(f_orig_khz[0], f_filt_khz[0]))
+    f_max_khz = float(max(f_orig_khz[-1], f_filt_khz[-1]))
+
+    if cutoff_marker_hz is not None and (f_min_khz <= cutoff_marker_hz / 1000.0 <= f_max_khz):
+        ax.axvline(
+            cutoff_marker_hz / 1000.0,
+            color=CUTOFF_RED,
+            linestyle="--",
+            lw=1.6,
+            label=f"Cutoff ({cutoff_marker_hz / 1000.0:.1f} kHz)",
+        )
+
+    ax.set_xlim(f_min_khz, f_max_khz)
+    min_db = min(float(np.min(view_orig.power_db)), float(np.min(view_filt.power_db)))
+    max_db = max(float(view_orig.peak_db), float(view_filt.peak_db))
+    ax.set_ylim(max(-120.0, min_db - 5.0), max(0.0, max_db + 6.0))
+
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+    ax.set_xlabel("Frequency (kHz)", fontsize=11)
+    ax.set_ylabel("Power (dBFS)", fontsize=11)
+    ax.tick_params(axis="both", which="major", labelsize=10)
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+
+    return fig, ax
+

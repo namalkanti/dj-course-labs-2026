@@ -13,6 +13,7 @@ import soundfile as sf
 from yourshot.synth import (
     generate_chirp,
     generate_drum_loop,
+    generate_linear_chirp,
     generate_transient_clicks,
     generate_white_noise,
 )
@@ -68,6 +69,10 @@ def load_audio_catalog(
         (
             "Synthetic: Exponential Chirp (20 Hz - 22 kHz)",
             lambda: generate_chirp(3.0, fs),
+        ),
+        (
+            "Synthetic: Linear High-Register Chirp (10 kHz - 20 kHz)",
+            lambda: generate_linear_chirp(4.0, fs, 10000.0, 20000.0),
         ),
         (
             "Synthetic: White Noise (Wideband)",

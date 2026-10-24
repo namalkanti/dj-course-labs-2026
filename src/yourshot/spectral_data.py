@@ -159,3 +159,31 @@ class RGBBlendedWaveformView:
     envelope_upper: np.ndarray
     envelope_lower: np.ndarray
     rgb_colors: np.ndarray
+
+
+@dataclass(frozen=True)
+class CutoffDetectionAnalysis:
+    """Automated high-frequency cutoff profiling and transcode authenticity verdict.
+
+    Attributes:
+        detected_cutoff_hz: Estimated brick-wall lowpass cutoff frequency in Hz.
+        peak_shelf_db: Reference peak power level in the upper register (10–22 kHz).
+        noise_floor_db: Average power level in the post-cutoff stopband.
+        stopband_attenuation_db: Difference in dB between shelf reference and stopband noise floor.
+        verdict: Plain-English authenticity classification.
+                 - "Genuine Lossless / 320k"
+                 - "Likely 192k Transcode"
+                 - "Likely 128k Transcode"
+                 - "Low-Quality / Bandlimited"
+        is_suspicious_transcode: True if file exhibits a brick-wall cutoff < 19.5 kHz.
+        confidence: Estimated confidence score in [0.0, 1.0].
+    """
+
+    detected_cutoff_hz: float
+    peak_shelf_db: float
+    noise_floor_db: float
+    stopband_attenuation_db: float
+    verdict: str
+    is_suspicious_transcode: bool
+    confidence: float
+
