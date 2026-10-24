@@ -8,7 +8,7 @@ at the bottom of the module:
 - 3-band individual envelope shapes and non-negativity.
 - Blended RGB waveform conversion, envelope symmetry, and color unit cube bounds.
 - Frequency-to-color crossover channel dominance.
-- Shelf extraction boundaries and peak decibel normalization.
+- Sub-band spectrum cropping and peak decibel normalization.
 """
 
 from typing import Tuple
@@ -16,14 +16,12 @@ import numpy as np
 import pytest
 
 from yourshot.spectral_data import (
-    HighFrequencyShelfView,
     RGBBlendedWaveformView,
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
 )
 from yourshot.spectral import (
-    compute_high_frequency_shelf,
     compute_stft_spectrogram,
     compute_three_band_waveform,
     compute_welch_spectrum,
@@ -63,6 +61,21 @@ def test_welch_spectrum_peak_frequency_localization():
     view = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
 
     assert_peak_frequency_near(view, target_freq=target_freq, tolerance_hz=fs / window_length)
+
+
+def test_spectrum_view_crop_and_normalize():
+    """Cropping a SpectrumView to [f_min, f_max] with normalize_peak must offset peak to 0.0 dBFS."""
+    fs = 44100
+    frequencies = np.linspace(0.0, fs / 2.0, 1025)
+    power_db = -20.0 - (frequencies / 1000.0)
+    full_view = SpectrumView(frequencies=frequencies, power_db=power_db)
+    f_min = 10000.0
+
+    cropped_view = full_view.crop(f_min=f_min, normalize_peak=True)
+
+    assert isinstance(cropped_view, SpectrumView)
+    assert_frequencies_bounded_between(cropped_view.frequencies, f_min=f_min, f_max=fs / 2.0)
+    assert_spectrum_peak_normalized_to_zero(cropped_view)
 
 
 def test_stft_spectrogram_shapes_and_clipping():
@@ -147,25 +160,6 @@ def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, c
     )
 
 
-def test_high_frequency_shelf_extraction_and_normalization():
-    """Shelf lens must isolate frequencies >= f_min and normalize peak level to 0 dBFS."""
-    fs = 44100
-    frequencies = np.linspace(0.0, fs / 2.0, 1025)
-    power_db = -20.0 - (frequencies / 1000.0)
-    f_min = 10000.0
-
-    shelf_view = compute_high_frequency_shelf(
-        frequencies,
-        power_db,
-        f_min=f_min,
-        normalize_peak=True,
-    )
-
-    assert isinstance(shelf_view, HighFrequencyShelfView)
-    assert_frequencies_bounded_between(shelf_view.frequencies, f_min=f_min, f_max=fs / 2.0)
-    assert_shelf_peak_normalized_to_zero(shelf_view.normalized_power_db)
-
-
 # ---------------------------------------------------------------------------
 # Domain-Specific Assertion Helpers
 # ---------------------------------------------------------------------------
@@ -192,6 +186,19 @@ def assert_peak_frequency_near(
         f"Detected peak at {peak_freq:.2f} Hz differs from target {target_freq} Hz "
         f"by more than bin tolerance ({tolerance_hz:.2f} Hz)"
     )
+
+
+def assert_frequencies_bounded_between(
+    frequencies: np.ndarray, f_min: float, f_max: float
+) -> None:
+    """Assert frequency array has been cropped so all values lie within [f_min, f_max]."""
+    assert np.all(frequencies >= f_min)
+    assert frequencies[-1] == pytest.approx(f_max)
+
+
+def assert_spectrum_peak_normalized_to_zero(view: SpectrumView) -> None:
+    """Assert maximum decibel level in the spectrum is exactly 0.0 dBFS."""
+    assert view.peak_db == pytest.approx(0.0)
 
 
 def assert_spectrogram_view_structure(
@@ -269,16 +276,3 @@ def assert_dominant_three_band_envelope(
     assert dominant_band == expected_channel, (
         f"For {freq_hz} Hz expected dominant {channel_name}, but got means (low={mean_low:.3f}, mid={mean_mid:.3f}, high={mean_high:.3f})"
     )
-
-
-def assert_frequencies_bounded_between(
-    frequencies: np.ndarray, f_min: float, f_max: float
-) -> None:
-    """Assert frequency array has been cropped so all values lie within [f_min, f_max]."""
-    assert np.all(frequencies >= f_min)
-    assert frequencies[-1] == pytest.approx(f_max)
-
-
-def assert_shelf_peak_normalized_to_zero(power_db: np.ndarray) -> None:
-    """Assert maximum decibel level in the shelf is exactly 0.0 dB."""
-    assert np.max(power_db) == pytest.approx(0.0)

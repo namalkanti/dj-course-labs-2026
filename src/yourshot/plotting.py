@@ -9,10 +9,10 @@ Follows clean plotting conventions:
 
 from typing import Optional, Tuple
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 
 from yourshot.spectral_data import (
-    HighFrequencyShelfView,
     RGBBlendedWaveformView,
     SpectrogramView,
     SpectrumView,
@@ -48,19 +48,12 @@ def plot_three_band_waveform(
     else:
         fig = ax.figure
 
-    # Stack the envelopes symmetrically around zero:
-    # Baseline: Low band in center
-    # Stacking Mid on top of Low, and High on top of Mid
     base_low = view.low
     base_mid = base_low + view.mid
     base_high = base_mid + view.high
 
-    # Fill stacked bands (symmetric positive and negative)
-    # High band (outermost layer)
     ax.fill_between(view.times, -base_high, base_high, color=REKORDBOX_BLUE, alpha=0.9, label="High (>= 2.5 kHz)")
-    # Mid band (middle layer)
     ax.fill_between(view.times, -base_mid, base_mid, color=REKORDBOX_ORANGE, alpha=0.95, label="Mid (250 Hz - 2.5 kHz)")
-    # Low band (innermost core)
     ax.fill_between(view.times, -base_low, base_low, color=REKORDBOX_CYAN, alpha=1.0, label="Low (< 250 Hz)")
 
     ax.axhline(0.0, color="#ffffff", lw=0.5, alpha=0.4)
@@ -70,7 +63,7 @@ def plot_three_band_waveform(
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
     ax.set_xlabel("Time (seconds)", fontsize=11)
-    ax.set_ylabel("RMS Amplitude", fontsize=11)
+    ax.set_ylabel("Averaged (RMS) Amplitude", fontsize=11)
     ax.tick_params(axis="both", which="major", labelsize=10)
     ax.grid(True, which="both", alpha=0.15, linestyle="--")
     ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
@@ -86,8 +79,10 @@ def plot_welch_spectrum(
     color: str = REKORDBOX_CYAN,
     f_min: float = 20.0,
     f_max: Optional[float] = None,
+    log_freq: bool = True,
+    cutoff_marker_hz: Optional[float] = None,
 ) -> Tuple[plt.Figure, plt.Axes]:
-    """Render Welch PSD on a logarithmic frequency axis (semilogx).
+    """Render Welch PSD on a logarithmic or linear frequency axis.
 
     Args:
         view: SpectrumView containing frequencies and power_db.
@@ -97,6 +92,8 @@ def plot_welch_spectrum(
         color: Line color.
         f_min: Minimum display frequency in Hz (defaults to 20 Hz).
         f_max: Maximum display frequency in Hz (defaults to Nyquist).
+        log_freq: When True, plots frequency on a musical log scale. When False, linear.
+        cutoff_marker_hz: Optional frequency to mark with a vertical dashed line.
 
     Returns:
         Tuple of (Figure, Axes).
@@ -109,12 +106,38 @@ def plot_welch_spectrum(
     if f_max is None:
         f_max = float(view.frequencies[-1])
 
-    ax.semilogx(view.frequencies, view.power_db, color=color, lw=1.5, alpha=0.95)
-    ax.set_xlim(f_min, f_max)
-    ax.set_ylim(-100.0, max(0.0, view.peak_db + 6.0))
+    if log_freq:
+        ax.semilogx(view.frequencies, view.power_db, color=color, lw=1.5, alpha=0.95, label="Power")
+        ax.set_xlabel("Frequency (kHz)", fontsize=11)
+        # Explicit standard musical log tick locations including sub-bass, mid bands, 10k, and 20k Nyquist edge
+        standard_ticks = [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0]
+        visible_ticks = [t for t in standard_ticks if f_min <= t <= f_max]
+        ax.set_xticks(visible_ticks)
+        ax.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda val, pos: f"{int(val / 1000)}k" if val >= 1000.0 else f"{int(val)}")
+        )
+    else:
+        ax.plot(view.frequencies / 1000.0, view.power_db, color=color, lw=1.5, alpha=0.95, label="Power")
+        ax.set_xlabel("Frequency (kHz)", fontsize=11)
+
+    if cutoff_marker_hz is not None and cutoff_marker_hz <= f_max:
+        marker_x = cutoff_marker_hz if log_freq else (cutoff_marker_hz / 1000.0)
+        ax.axvline(
+            marker_x,
+            color=CUTOFF_RED,
+            linestyle="--",
+            lw=1.5,
+            label=f"Cutoff ({cutoff_marker_hz / 1000:.1f} kHz)",
+        )
+        ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+
+    if log_freq:
+        ax.set_xlim(f_min, f_max)
+    else:
+        ax.set_xlim(f_min / 1000.0, f_max / 1000.0)
+    ax.set_ylim(max(-120.0, float(np.min(view.power_db)) - 5.0), max(0.0, view.peak_db + 6.0))
 
     ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-    ax.set_xlabel("Frequency (Hz) — Musical Log Scale", fontsize=11)
     ax.set_ylabel("Power (dBFS)", fontsize=11)
     ax.tick_params(axis="both", which="major", labelsize=10)
     ax.grid(True, which="both", alpha=0.25)
@@ -150,7 +173,7 @@ def plot_stft_spectrogram(
 
     mesh = ax.pcolormesh(
         view.times,
-        view.frequencies,
+        view.frequencies / 1000.0,
         view.power_db,
         shading="gouraud",
         cmap=cmap,
@@ -160,7 +183,7 @@ def plot_stft_spectrogram(
 
     if cutoff_marker_hz is not None and cutoff_marker_hz < view.frequencies[-1]:
         ax.axhline(
-            cutoff_marker_hz,
+            cutoff_marker_hz / 1000.0,
             color=CUTOFF_RED,
             linestyle="--",
             lw=1.6,
@@ -168,63 +191,14 @@ def plot_stft_spectrogram(
         )
         ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
 
-    ax.set_ylim(0.0, view.frequencies[-1])
+    ax.set_ylim(0.0, view.frequencies[-1] / 1000.0)
     ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
     ax.set_xlabel("Time (seconds)", fontsize=11)
-    ax.set_ylabel("Frequency (Hz)", fontsize=11)
+    ax.set_ylabel("Frequency (kHz)", fontsize=11)
     ax.tick_params(axis="both", which="major", labelsize=10)
 
     cbar = fig.colorbar(mesh, ax=ax, pad=0.015)
     cbar.set_label("Power (dBFS)", fontsize=10)
     cbar.ax.tick_params(labelsize=9)
-
-    return fig, ax
-
-
-def plot_high_frequency_shelf(
-    view: HighFrequencyShelfView,
-    ax: Optional[plt.Axes] = None,
-    figsize: Tuple[float, float] = (11.0, 3.8),
-    title: str = "High-Frequency Shelf Inspection (10 kHz to Nyquist)",
-    cutoff_marker_hz: Optional[float] = None,
-) -> Tuple[plt.Figure, plt.Axes]:
-    """Render cropped 10-22.05 kHz spectrum normalized to 0 dBFS peak to inspect cutoff cliffs.
-
-    Args:
-        view: HighFrequencyShelfView containing cropped frequencies and normalized_power_db.
-        ax: Existing Matplotlib Axes. If None, creates a new figure.
-        figsize: Canvas size in inches when creating a new figure.
-        title: Plot title string.
-        cutoff_marker_hz: Optional frequency to indicate expected codec cutoff.
-
-    Returns:
-        Tuple of (Figure, Axes).
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.figure
-
-    ax.plot(view.frequencies, view.normalized_power_db, color=REKORDBOX_ORANGE, lw=1.8, label="Treble Roll-Off")
-    ax.axhline(0.0, color="#ffffff", linestyle=":", lw=0.8, alpha=0.6, label="Peak Reference (0 dB)")
-
-    if cutoff_marker_hz is not None and cutoff_marker_hz < view.frequencies[-1]:
-        ax.axvline(
-            cutoff_marker_hz,
-            color=CUTOFF_RED,
-            linestyle="--",
-            lw=1.5,
-            label=f"Simulated Cutoff ({cutoff_marker_hz / 1000:.1f} kHz)",
-        )
-
-    ax.set_xlim(view.frequencies[0], view.frequencies[-1])
-    ax.set_ylim(-70.0, 5.0)
-
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-    ax.set_xlabel("Frequency (Hz)", fontsize=11)
-    ax.set_ylabel("Relative Power (dB)", fontsize=11)
-    ax.tick_params(axis="both", which="major", labelsize=10)
-    ax.grid(True, which="both", alpha=0.25)
-    ax.legend(loc="lower left", fontsize=9, framealpha=0.85)
 
     return fig, ax

@@ -2,24 +2,23 @@
 
 Each dataclass represents a distinct analytical projection or "lens" over the same
 underlying audio signal without modifying the source audio:
-- SpectrumView: Wide-angle frequency lens (0 to Nyquist) showing global tonal balance.
+- SpectrumView: 1D frequency lens (Power Spectral Density across frequencies).
 - SpectrogramView: 2D time-frequency lens (STFT) localizing spectral events in time.
-- HighFrequencyShelfView: Telephoto inspection lens (10 kHz to Nyquist) exposing codec cutoffs.
 - ThreeBandWaveformView: DJ 3-band performance lens (Low/Mid/High envelopes, CDJ-3000 style).
 - RGBBlendedWaveformView: DJ blended-color performance lens (CDJ-2000 Nexus style).
 
 All array fields are typed NumPy arrays with explicit dimensional invariants.
-Derived scalar metrics (e.g. peak levels and display bounds) are exposed as
-read-only properties to keep the underlying arrays as the single source of truth.
+Derived scalar metrics and sub-band projections are exposed as methods/properties.
 """
 
 from dataclasses import dataclass
+from typing import Optional
 import numpy as np
 
 
 @dataclass(frozen=True)
 class SpectrumView:
-    """Wide-angle frequency lens: 1D Power Spectral Density (PSD) estimate across discrete frequencies.
+    """1D Frequency lens: Power Spectral Density (PSD) estimate across discrete frequencies.
 
     Fields:
         frequencies: 1D array of frequency bin center values in Hz, spanning [0.0, fs / 2].
@@ -35,6 +34,37 @@ class SpectrumView:
     def peak_db(self) -> float:
         """Observed maximum power level across all frequency bins in dBFS (float(np.max(power_db)))."""
         return float(np.max(self.power_db))
+
+    def crop(
+        self,
+        f_min: float = 0.0,
+        f_max: Optional[float] = None,
+        normalize_peak: bool = False,
+    ) -> "SpectrumView":
+        """Return a sub-band SpectrumView cropped to [f_min, f_max].
+
+        Args:
+            f_min: Lower frequency bound in Hz (defaults to 0.0).
+            f_max: Upper frequency bound in Hz (defaults to Nyquist).
+            normalize_peak: If True, offsets decibel levels so the sub-band peak is 0.0 dBFS.
+
+        Returns:
+            A new SpectrumView containing only bins within [f_min, f_max].
+        """
+        if f_max is None:
+            f_max = float(self.frequencies[-1])
+
+        mask = (self.frequencies >= f_min) & (self.frequencies <= f_max)
+        sub_frequencies = self.frequencies[mask]
+        sub_power_db = self.power_db[mask].copy()
+
+        if normalize_peak and len(sub_power_db) > 0:
+            sub_power_db -= float(np.max(sub_power_db))
+
+        return SpectrumView(
+            frequencies=sub_frequencies,
+            power_db=sub_power_db,
+        )
 
 
 @dataclass(frozen=True)
@@ -77,9 +107,9 @@ class ThreeBandWaveformView:
     """DJ 3-band performance lens: Pioneer CDJ-3000 / Rekordbox 6+ stacked waveform.
 
     Each frequency band is modeled as an independent amplitude envelope over time:
-    - low: Bass register (< 250 Hz, rendered as Cyan/Blue in Rekordbox).
-    - mid: Midrange register (250 Hz - 2.5 kHz, rendered as Orange/Yellow).
-    - high: Treble register (>= 2.5 kHz, rendered as Blue/White).
+    - low: Bass register (< 250 Hz, rendered as Cyan in Rekordbox).
+    - mid: Midrange register (250 Hz - 2.5 kHz, rendered as Orange/Amber).
+    - high: Treble register (>= 2.5 kHz, rendered as Blue).
 
     Fields:
         times: 1D array of frame center times in seconds. Length N_frames.
@@ -129,19 +159,3 @@ class RGBBlendedWaveformView:
     envelope_upper: np.ndarray
     envelope_lower: np.ndarray
     rgb_colors: np.ndarray
-
-
-@dataclass(frozen=True)
-class HighFrequencyShelfView:
-    """Telephoto inspection lens: isolated high-frequency spectral shelf (e.g. 10 kHz to Nyquist).
-
-    Used for codec lowpass cutoff inspection (128k MP3 shelf at 16 kHz vs Lossless).
-
-    Fields:
-        frequencies: 1D array of frequency bin values in Hz, spanning [f_min, fs / 2].
-        normalized_power_db: 1D array of power in decibels, normalized so the peak
-                             in the [f_min, Nyquist] band is 0.0 dBFS.
-    """
-
-    frequencies: np.ndarray
-    normalized_power_db: np.ndarray

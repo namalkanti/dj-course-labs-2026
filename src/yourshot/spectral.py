@@ -5,15 +5,13 @@ and return typed, frozen view dataclasses defined in yourshot.spectral_data:
 - compute_welch_spectrum -> SpectrumView
 - compute_stft_spectrogram -> SpectrogramView
 - compute_three_band_waveform -> ThreeBandWaveformView
-- compute_high_frequency_shelf -> HighFrequencyShelfView
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 import numpy as np
 import scipy.signal as signal
 
 from yourshot.spectral_data import (
-    HighFrequencyShelfView,
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
@@ -44,7 +42,6 @@ def compute_welch_spectrum(
     if overlap_length is None:
         overlap_length = window_length // 2
 
-    # Constrain window length if audio is shorter than requested window
     actual_nperseg = min(window_length, len(audio))
     actual_noverlap = min(overlap_length, actual_nperseg - 1)
 
@@ -142,7 +139,6 @@ def compute_three_band_waveform(
     safe_low = min(low_cutoff, nyquist * 0.95)
     safe_high = min(high_cutoff, nyquist * 0.98)
 
-    # 1. 2nd-order Butterworth crossover filter sections (SOS format for numerical stability)
     sos_low = signal.butter(2, safe_low / nyquist, btype="lowpass", output="sos")
     sos_mid = signal.butter(
         2, [safe_low / nyquist, safe_high / nyquist], btype="bandpass", output="sos"
@@ -153,7 +149,6 @@ def compute_three_band_waveform(
     sig_mid = signal.sosfilt(sos_mid, audio)
     sig_high = signal.sosfilt(sos_high, audio)
 
-    # 2. Block-wise RMS framing over hop_length
     num_frames = int(np.ceil(len(audio) / hop_length))
     pad_len = num_frames * hop_length - len(audio)
 
@@ -162,7 +157,6 @@ def compute_three_band_waveform(
         sig_mid = np.pad(sig_mid, (0, pad_len))
         sig_high = np.pad(sig_high, (0, pad_len))
 
-    # Reshape into (num_frames, hop_length) and compute RMS per frame
     low_frames = sig_low.reshape(num_frames, hop_length)
     mid_frames = sig_mid.reshape(num_frames, hop_length)
     high_frames = sig_high.reshape(num_frames, hop_length)
@@ -178,38 +172,4 @@ def compute_three_band_waveform(
         low=rms_low.astype(np.float64),
         mid=rms_mid.astype(np.float64),
         high=rms_high.astype(np.float64),
-    )
-
-
-def compute_high_frequency_shelf(
-    frequencies: np.ndarray,
-    power_db: np.ndarray,
-    f_min: float = 10000.0,
-    normalize_peak: bool = True,
-) -> HighFrequencyShelfView:
-    """Isolate the upper frequency register and normalize peak power to 0 dBFS.
-
-    Crops the spectrum to [f_min, Nyquist] and subtracts the peak power in that band
-    so that any lossy MP3 cutoff cliff drops relative to 0 dBFS.
-
-    Args:
-        frequencies: 1D array of frequency bin center values in Hz.
-        power_db: 1D array of power levels in dBFS.
-        f_min: Cutoff floor frequency in Hz (defaults to 10000 Hz).
-        normalize_peak: When True, subtracts max(power_db[f >= f_min]) so peak is 0.0 dB.
-
-    Returns:
-        HighFrequencyShelfView with cropped frequencies and normalized_power_db.
-    """
-    mask = frequencies >= f_min
-    cropped_freqs = frequencies[mask]
-    cropped_power = power_db[mask].copy()
-
-    if normalize_peak and len(cropped_power) > 0:
-        peak_in_shelf = float(np.max(cropped_power))
-        cropped_power -= peak_in_shelf
-
-    return HighFrequencyShelfView(
-        frequencies=cropped_freqs.astype(np.float64),
-        normalized_power_db=cropped_power.astype(np.float64),
     )
