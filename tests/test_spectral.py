@@ -1,144 +1,79 @@
-"""Unit tests verifying pure functional spectral transformations.
+"""Unit tests verifying physical and mathematical properties of spectral transformations.
 
-Mathematical and DSP Theory Under Test:
----------------------------------------
-1. Welch's Method (Power Spectral Density Estimation):
-   - Solves the inconsistent variance problem of the raw periodogram by partitioning
-     the input signal into overlapping Hann-windowed segments and averaging their periodograms.
-   - Frequency resolution is determined by window length L: Delta_f = fs / L.
-   - For a real-valued input, the one-sided spectrum contains (L // 2 + 1) discrete bins
-     spanning DC (0 Hz) to Nyquist (fs / 2 Hz).
-
-2. Short-Time Fourier Transform (STFT Spectrogram):
-   - Computes time-localized frequency spectra via sliding analysis windows.
-   - Dynamic range clipping to [vmax - dynamic_range_db, vmax] avoids visual obscuration
-     by numerical noise floors, matching professional DAW and RTA analyzer displays.
-
-3. Rekordbox 3-Band RGB Waveform:
-   - Emulates Pioneer DJ CDJ/Rekordbox RGB waveform rendering:
-     * Low Band (< 250 Hz): Basslines and kick drums mapped to the Red channel.
-     * Mid Band (250 Hz - 2500 Hz): Vocals, snare bodies, and synths mapped to Green.
-     * High Band (>= 2500 Hz): Hi-hats, cymbals, and vocal air mapped to Blue.
-   - Envelopes are computed via block-wise extrema, while colors are derived from
-     the relative RMS energy per band normalized into the RGB unit cube [0.0, 1.0]^3.
-
-4. High-Frequency Shelf Extraction:
-   - Isolates the upper spectral register (typically >= 10 kHz) and normalizes peak
-     power to 0 dBFS to expose codec lowpass filter brick-wall shelves (16 kHz for 128k,
-     18.5 kHz for 192k, 20 kHz for 320k MP3).
+Self-documenting assertion helpers encapsulate domain invariants and are grouped
+at the bottom of the module:
+- Output array dimensions and boundary frequencies.
+- Peak frequency localization within discrete bin limits.
+- Dynamic range clamping floors.
+- 3-band individual envelope shapes and non-negativity.
+- Blended RGB waveform conversion, envelope symmetry, and color unit cube bounds.
+- Frequency-to-color crossover channel dominance.
+- Shelf extraction boundaries and peak decibel normalization.
 """
 
 from typing import Tuple
 import numpy as np
 import pytest
 
+from yourshot.spectral_data import (
+    HighFrequencyShelfView,
+    RGBBlendedWaveformView,
+    SpectrogramView,
+    SpectrumView,
+    ThreeBandWaveformView,
+)
 from yourshot.spectral import (
-    RekordboxWaveformResult,
-    SpectrogramResult,
-    SpectrumResult,
     compute_high_frequency_shelf,
-    compute_rekordbox_rgb_waveform,
     compute_stft_spectrogram,
+    compute_three_band_waveform,
     compute_welch_spectrum,
 )
 
 
 def generate_pure_sine(freq_hz: float, duration_sec: float = 1.0, fs: int = 44100) -> np.ndarray:
-    """Generate a clean, deterministic float32 sinusoidal test signal.
-
-    Args:
-        freq_hz: Tone frequency in Hz.
-        duration_sec: Total duration in seconds.
-        fs: Sampling rate in samples per second.
-
-    Returns:
-        1D NumPy float32 array normalized to 0.8 amplitude (-1.94 dBFS)
-        to prevent clipping in down-stream filtering.
-    """
+    """Generate a clean float32 sinusoidal test signal normalized to 0.8 amplitude."""
     t = np.arange(int(duration_sec * fs), dtype=np.float32) / fs
     return (0.8 * np.sin(2.0 * np.pi * freq_hz * t)).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
-# compute_welch_spectrum
+# Tests (Specifications)
 # ---------------------------------------------------------------------------
 
 
 def test_welch_spectrum_shapes_and_bounds():
-    """Verify Welch PSD output dimensions, frequency bounds, and monotonicity.
-
-    Mathematical Invariants:
-    - Bin Count: Real rFFT produces exactly (window_length // 2 + 1) bins.
-    - Endpoints: The first bin is strictly 0.0 Hz (DC) and the final bin is
-      strictly fs / 2 Hz (Nyquist).
-    - Monotonicity: Frequency bins must advance with strictly positive constant step.
-    - PeakdB: The returned scalar peak_db must equal the array maximum.
-    """
+    """Welch PSD must produce (L//2 + 1) bins spanning DC (0 Hz) to Nyquist (fs/2)."""
     fs = 44100
     duration_sec = 1.0
     audio = generate_pure_sine(1000.0, duration_sec=duration_sec, fs=fs)
     window_length = 2048
 
-    result = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
+    view = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
 
-    assert isinstance(result, SpectrumResult)
-    num_bins = window_length // 2 + 1
-    assert result.frequencies.shape == (num_bins,)
-    assert result.power_db.shape == (num_bins,)
-    assert result.frequencies[0] == pytest.approx(0.0)
-    assert result.frequencies[-1] == pytest.approx(fs / 2.0)
-    assert np.all(np.diff(result.frequencies) > 0.0), "Frequencies must be monotonically increasing"
-    assert result.peak_db == pytest.approx(float(np.max(result.power_db)))
+    assert_spectrum_view_structure(view, expected_bins=window_length // 2 + 1, fs=fs)
 
 
 def test_welch_spectrum_peak_frequency_localization():
-    """Verify that a single-frequency tone concentrates its spectral power at the expected bin.
-
-    DSP Principle:
-    A pure continuous sinusoid x(t) = sin(2*pi*f_0*t) windowed by a Hann taper
-    has its Fourier transform centered at f_0, with main-lobe width proportional
-    to 2 * (fs / window_length). The discrete bin with maximum power must be
-    within +/- 1 bin of the true continuous frequency f_0.
-    """
+    """Welch PSD of a pure tone must concentrate maximum power within +/- 1 bin of target."""
     fs = 44100
     target_freq = 1000.0
     audio = generate_pure_sine(target_freq, duration_sec=2.0, fs=fs)
     window_length = 4096
 
-    result = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
+    view = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
 
-    peak_idx = int(np.argmax(result.power_db))
-    peak_freq = result.frequencies[peak_idx]
-    bin_width = fs / window_length  # ~10.74 Hz for 44.1k and L=4096
-
-    assert abs(peak_freq - target_freq) <= bin_width, (
-        f"Detected peak at {peak_freq:.2f} Hz differs from target {target_freq} Hz "
-        f"by more than bin width ({bin_width:.2f} Hz)"
-    )
-
-
-# ---------------------------------------------------------------------------
-# compute_stft_spectrogram
-# ---------------------------------------------------------------------------
+    assert_peak_frequency_near(view, target_freq=target_freq, tolerance_hz=fs / window_length)
 
 
 def test_stft_spectrogram_shapes_and_clipping():
-    """Verify STFT spectrogram 2D matrix geometry, axes spans, and decibel floor clamping.
-
-    DSP Invariants:
-    - The frequency axis has dimension (window_length // 2 + 1) spanning [0, fs/2].
-    - The time axis spans [0, duration_sec] with resolution (window_length - overlap_length) / fs.
-    - Decibel Display Dynamic Range: All entries in power_db must be clamped to
-      [vmax - dynamic_range_db, vmax] so that low-level quantization noise
-      does not pollute visual inspection.
-    """
+    """STFT 2D spectrogram must span full time/frequency bounds and clamp to top 80 dB span (e.g. -80 to 0 dBFS)."""
     fs = 44100
     duration_sec = 1.5
     audio = generate_pure_sine(440.0, duration_sec=duration_sec, fs=fs)
     window_length = 2048
     overlap_length = 1536
 
-    result = compute_stft_spectrogram(
+    view = compute_stft_spectrogram(
         audio,
         fs=fs,
         window_length=window_length,
@@ -146,63 +81,41 @@ def test_stft_spectrogram_shapes_and_clipping():
         dynamic_range_db=80.0,
     )
 
-    assert isinstance(result, SpectrogramResult)
-    assert result.times.ndim == 1
-    assert result.frequencies.ndim == 1
-    assert result.power_db.shape == (len(result.frequencies), len(result.times))
-
-    # Time array should span approximately [0, duration]
-    assert result.times[0] >= 0.0
-    assert result.times[-1] == pytest.approx(duration_sec, abs=0.1)
-
-    # Frequency array should span [0, Nyquist]
-    assert result.frequencies[0] == pytest.approx(0.0)
-    assert result.frequencies[-1] == pytest.approx(fs / 2.0)
-
-    # Dynamic range clipping: all values must be >= vmax - dynamic_range_db
-    assert result.vmax == pytest.approx(float(np.max(result.power_db)))
-    assert result.vmin == pytest.approx(result.vmax - 80.0)
-    assert np.all(result.power_db >= result.vmin - 1e-6)
-    assert np.all(result.power_db <= result.vmax + 1e-6)
+    assert_spectrogram_view_structure(view, fs=fs, duration_sec=duration_sec)
+    assert_spectrogram_dynamic_range_clipped(view, dynamic_range_db=80.0)
 
 
-# ---------------------------------------------------------------------------
-# compute_rekordbox_rgb_waveform
-# ---------------------------------------------------------------------------
-
-
-def test_rekordbox_rgb_waveform_shapes_and_color_ranges():
-    """Verify amplitude envelope boundaries and RGB color normalizations.
-
-    Waveform Requirements:
-    - Envelope symmetry: The positive envelope must be >= 0; negative envelope <= 0.
-    - Color Bounds: Each RGB channel must lie strictly within [0.0, 1.0] to serve
-      as valid input for Matplotlib, HTML5 canvas, or OpenGL shaders.
-    - Frame Alignment: Total frames must match ceil(N / hop_length).
-    """
+def test_three_band_waveform_shapes_and_bounds():
+    """Rekordbox 3-band view must compute non-negative envelopes for low, mid, and high bands."""
     fs = 44100
     duration_sec = 1.0
     audio = generate_pure_sine(500.0, duration_sec=duration_sec, fs=fs)
     hop_length = 256
 
-    result = compute_rekordbox_rgb_waveform(audio, fs=fs, hop_length=hop_length)
+    view = compute_three_band_waveform(audio, fs=fs, hop_length=hop_length)
 
-    assert isinstance(result, RekordboxWaveformResult)
-    num_frames = len(result.times)
-    expected_frames = len(audio) // hop_length
-    assert abs(num_frames - expected_frames) <= 2
+    assert_three_band_waveform_valid(view, audio_len=len(audio), hop_length=hop_length)
 
-    assert result.envelope_upper.shape == (num_frames,)
-    assert result.envelope_lower.shape == (num_frames,)
-    assert result.rgb_colors.shape == (num_frames, 3)
 
-    # Upper envelope >= 0, Lower envelope <= 0
-    assert np.all(result.envelope_upper >= -1e-6)
-    assert np.all(result.envelope_lower <= 1e-6)
+def test_three_band_to_rgb_blended_conversion():
+    """Converting 3-band envelopes to classic RGB must yield valid [0, 1] color coordinates."""
+    fs = 44100
+    duration_sec = 1.0
+    audio = generate_pure_sine(500.0, duration_sec=duration_sec, fs=fs)
+    hop_length = 256
 
-    # RGB values must be in [0.0, 1.0]
-    assert np.all(result.rgb_colors >= 0.0)
-    assert np.all(result.rgb_colors <= 1.0)
+    three_band = compute_three_band_waveform(audio, fs=fs, hop_length=hop_length)
+
+    # Mock full-signal peak envelope
+    num_frames = len(three_band.times)
+    env_upper = np.full(num_frames, 0.8)
+    env_lower = np.full(num_frames, -0.8)
+
+    rgb_view = three_band.to_rgb_blended(envelope_upper=env_upper, envelope_lower=env_lower)
+
+    assert isinstance(rgb_view, RGBBlendedWaveformView)
+    assert_rgb_blended_waveform_envelope_valid(rgb_view, expected_frames=num_frames)
+    assert_rgb_colors_within_unit_cube(rgb_view.rgb_colors)
 
 
 @pytest.mark.parametrize(
@@ -213,21 +126,12 @@ def test_rekordbox_rgb_waveform_shapes_and_color_ranges():
         (8000.0, 2, "Blue (High >= 2.5 kHz)"),
     ],
 )
-def test_rekordbox_frequency_to_color_mapping(freq_hz: float, dominant_channel: int, channel_name: str):
-    """Verify that pure tones map to Pioneer Rekordbox color channels.
-
-    Rekordbox Crossover Model:
-    - Red channel: Bassband energy (< 250 Hz). A 80 Hz kick/sub must produce Red dominance.
-    - Green channel: Midband energy (250 Hz - 2.5 kHz). A 1 kHz synth/vocal must produce Green dominance.
-    - Blue channel: Highband energy (>= 2.5 kHz). An 8 kHz hi-hat/sizzle must produce Blue dominance.
-
-    The first 10% of samples are discarded before checking channel dominance
-    to allow the IIR crossover filter state to reach steady-state response.
-    """
+def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, channel_name: str):
+    """Pure tones must route to their respective Rekordbox 3-band crossover register."""
     fs = 44100
     audio = generate_pure_sine(freq_hz, duration_sec=1.0, fs=fs)
 
-    result = compute_rekordbox_rgb_waveform(
+    three_band = compute_three_band_waveform(
         audio,
         fs=fs,
         hop_length=256,
@@ -235,48 +139,146 @@ def test_rekordbox_frequency_to_color_mapping(freq_hz: float, dominant_channel: 
         high_cutoff=2500.0,
     )
 
-    # Exclude initial filter transient (first 10% of frames)
-    steady_frames = result.rgb_colors[int(len(result.rgb_colors) * 0.1) :]
-    mean_colors = np.mean(steady_frames, axis=0)
-
-    dominant_detected = int(np.argmax(mean_colors))
-    assert dominant_detected == dominant_channel, (
-        f"For {freq_hz} Hz expected dominant {channel_name}, but got mean (R, G, B) = {mean_colors}"
+    assert_dominant_three_band_envelope(
+        three_band,
+        expected_channel=dominant_channel,
+        freq_hz=freq_hz,
+        channel_name=channel_name,
     )
 
 
-# ---------------------------------------------------------------------------
-# compute_high_frequency_shelf
-# ---------------------------------------------------------------------------
-
-
 def test_high_frequency_shelf_extraction_and_normalization():
-    """Verify high-frequency shelf slicing and peak decibel normalization.
-
-    Analytical Goal:
-    To detect lossy MP3 encoder cutoff filters (e.g., 16 kHz brick-wall),
-    we inspect the upper spectral range [f_min, Nyquist].
-    Normalizing the peak in this region to 0 dBFS ensures that codec cutoff
-    shelves align to a standard relative vertical datum regardless of
-    the track's overall recording volume or gain staging.
-    """
+    """Shelf lens must isolate frequencies >= f_min and normalize peak level to 0 dBFS."""
     fs = 44100
     frequencies = np.linspace(0.0, fs / 2.0, 1025)
-    # Synthetic spectrum with linear power drop: -20 dB at DC to -42 dB at Nyquist
     power_db = -20.0 - (frequencies / 1000.0)
-
     f_min = 10000.0
-    shelf_freqs, shelf_power = compute_high_frequency_shelf(
+
+    shelf_view = compute_high_frequency_shelf(
         frequencies,
         power_db,
         f_min=f_min,
         normalize_peak=True,
     )
 
-    # All returned frequencies must reside in [f_min, Nyquist]
-    assert np.all(shelf_freqs >= f_min)
-    assert shelf_freqs[-1] == pytest.approx(fs / 2.0)
-    assert shelf_freqs.shape == shelf_power.shape
+    assert isinstance(shelf_view, HighFrequencyShelfView)
+    assert_frequencies_bounded_between(shelf_view.frequencies, f_min=f_min, f_max=fs / 2.0)
+    assert_shelf_peak_normalized_to_zero(shelf_view.normalized_power_db)
 
-    # Peak normalization: maximum decibel level in the sliced shelf must be exactly 0 dB
-    assert np.max(shelf_power) == pytest.approx(0.0)
+
+# ---------------------------------------------------------------------------
+# Domain-Specific Assertion Helpers
+# ---------------------------------------------------------------------------
+
+
+def assert_spectrum_view_structure(view: SpectrumView, expected_bins: int, fs: int) -> None:
+    """Assert Welch PSD output dimensions, frequency bounds, and monotonicity."""
+    assert isinstance(view, SpectrumView)
+    assert view.frequencies.shape == (expected_bins,)
+    assert view.power_db.shape == (expected_bins,)
+    assert view.frequencies[0] == pytest.approx(0.0)
+    assert view.frequencies[-1] == pytest.approx(fs / 2.0)
+    assert np.all(np.diff(view.frequencies) > 0.0), "Frequencies must be monotonically increasing"
+    assert view.peak_db == pytest.approx(float(np.max(view.power_db)))
+
+
+def assert_peak_frequency_near(
+    view: SpectrumView, target_freq: float, tolerance_hz: float
+) -> None:
+    """Assert frequency bin with maximum spectral power lies within tolerance_hz of target."""
+    peak_idx = int(np.argmax(view.power_db))
+    peak_freq = view.frequencies[peak_idx]
+    assert abs(peak_freq - target_freq) <= tolerance_hz, (
+        f"Detected peak at {peak_freq:.2f} Hz differs from target {target_freq} Hz "
+        f"by more than bin tolerance ({tolerance_hz:.2f} Hz)"
+    )
+
+
+def assert_spectrogram_view_structure(
+    view: SpectrogramView, fs: int, duration_sec: float
+) -> None:
+    """Assert STFT spectrogram matrix geometry and time/frequency axis extents."""
+    assert isinstance(view, SpectrogramView)
+    assert view.times.ndim == 1
+    assert view.frequencies.ndim == 1
+    assert view.power_db.shape == (len(view.frequencies), len(view.times))
+
+    assert view.times[0] >= 0.0
+    assert view.times[-1] == pytest.approx(duration_sec, abs=0.1)
+    assert view.frequencies[0] == pytest.approx(0.0)
+    assert view.frequencies[-1] == pytest.approx(fs / 2.0)
+
+
+def assert_spectrogram_dynamic_range_clipped(
+    view: SpectrogramView, dynamic_range_db: float
+) -> None:
+    """Assert spectrogram power_db values are in dBFS and clamped to [vmax - dynamic_range_db, vmax] (e.g. [-80 dBFS, 0 dBFS])."""
+    assert view.vmax == pytest.approx(float(np.max(view.power_db)))
+    assert view.vmin == pytest.approx(view.vmax - dynamic_range_db)
+    assert np.all(view.power_db >= view.vmin - 1e-6)
+    assert np.all(view.power_db <= view.vmax + 1e-6)
+
+
+def assert_three_band_waveform_valid(
+    view: ThreeBandWaveformView, audio_len: int, hop_length: int
+) -> None:
+    """Assert 3-band envelopes match frame counts and have non-negative amplitude bounds."""
+    assert isinstance(view, ThreeBandWaveformView)
+    num_frames = len(view.times)
+    expected_frames = audio_len // hop_length
+    assert abs(num_frames - expected_frames) <= 2
+
+    for band_name, band_env in (("low", view.low), ("mid", view.mid), ("high", view.high)):
+        assert band_env.shape == (num_frames,), f"Band {band_name} frame mismatch"
+        assert np.all(band_env >= -1e-6), f"Band {band_name} contains negative amplitudes"
+
+
+def assert_rgb_blended_waveform_envelope_valid(
+    view: RGBBlendedWaveformView, expected_frames: int
+) -> None:
+    """Assert blended RGB waveform envelope framing and sign polarity."""
+    assert len(view.times) == expected_frames
+    assert view.envelope_upper.shape == (expected_frames,)
+    assert view.envelope_lower.shape == (expected_frames,)
+    assert np.all(view.envelope_upper >= -1e-6)
+    assert np.all(view.envelope_lower <= 1e-6)
+
+
+def assert_rgb_colors_within_unit_cube(rgb_colors: np.ndarray) -> None:
+    """Assert RGB color array coordinates reside within [0.0, 1.0]^3."""
+    assert rgb_colors.ndim == 2
+    assert rgb_colors.shape[1] == 3
+    assert np.all(rgb_colors >= 0.0)
+    assert np.all(rgb_colors <= 1.0)
+
+
+def assert_dominant_three_band_envelope(
+    three_band: ThreeBandWaveformView,
+    expected_channel: int,
+    freq_hz: float,
+    channel_name: str,
+) -> None:
+    """Assert steady-state energy is concentrated in expected band (0=low, 1=mid, 2=high)."""
+    transient_cutoff = int(len(three_band.times) * 0.1)
+    mean_low = float(np.mean(three_band.low[transient_cutoff:]))
+    mean_mid = float(np.mean(three_band.mid[transient_cutoff:]))
+    mean_high = float(np.mean(three_band.high[transient_cutoff:]))
+    band_means = [mean_low, mean_mid, mean_high]
+
+    dominant_band = int(np.argmax(band_means))
+    assert dominant_band == expected_channel, (
+        f"For {freq_hz} Hz expected dominant {channel_name}, but got means (low={mean_low:.3f}, mid={mean_mid:.3f}, high={mean_high:.3f})"
+    )
+
+
+def assert_frequencies_bounded_between(
+    frequencies: np.ndarray, f_min: float, f_max: float
+) -> None:
+    """Assert frequency array has been cropped so all values lie within [f_min, f_max]."""
+    assert np.all(frequencies >= f_min)
+    assert frequencies[-1] == pytest.approx(f_max)
+
+
+def assert_shelf_peak_normalized_to_zero(power_db: np.ndarray) -> None:
+    """Assert maximum decibel level in the shelf is exactly 0.0 dB."""
+    assert np.max(power_db) == pytest.approx(0.0)
