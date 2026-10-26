@@ -43,12 +43,13 @@ def render_part1_overview(mo):
 
     | DJ Concept | Physical Musical Meaning | DSP / MIR Mathematical Implementation |
     | :--- | :--- | :--- |
-    | **Transient / Click** | The percussive attack of a kick, snare, or hi-hat | Positive jump in spectral energy (**Spectral Flux**) |
-    | **Track BPM** | Frequency of recurring quarter notes | Primary lag peak $\tau_{\text{beat}}$ in autocorrelation $R(\tau)$ |
-    | **Beatgrid Phase ("The ONE")**| Alignment of the initial downbeat | Offset $\phi_0$ maximizing cross-correlation with beat pulse train |
+    | **Transient / Attack / "The Hit"** | The percussive attack of a kick, snare, or hi-hat (ignoring decaying/sustained sound) | Positive jump in spectral energy (**Spectral Flux**) with half-wave rectification |
+    | **Track BPM** | Frequency of recurring quarter notes (the pulse you tap your foot to) | Primary lag peak $\tau_{\text{beat}}$ in autocorrelation $R(\tau)$ |
+    | **Beatgrid Phase ("The ONE")**| Alignment of the initial downbeat where the bar begins | Offset $\phi_0$ maximizing cross-correlation with beat pulse train |
     | **Halftime / Doubletime Glitch**| Rekordbox detecting 70 BPM instead of 140 BPM | Subharmonic / octave ambiguity peak selection ($2\tau_0$ vs $\tau_0$) |
-    | **Meter ($4/4$ vs $3/4$)** | Downbeat every 4 beats vs every 3 beats | Energy ratio of autocorrelation peaks: $R(4\tau_0) / R(3\tau_0)$ |
-    | **Phrasing (16/32-Beat Blocks)**| Major section changes, drop transitions | Long-lag envelope modulation ($16\tau_0, 32\tau_0$) or novelty curves |
+    | **Meter ($4/4$ vs $3/4$)** | Downbeat every 4 beats (house/techno) vs every 3 beats (waltz) | Energy ratio of autocorrelation peaks: $R(4\tau_0) / R(3\tau_0)$ |
+    | **Syncopation / "Groove" Offbeats**| Accents on weak subdivisions (e.g. 16th notes, the "and" of 2) while leaving main beats empty | High spectral flux on sub-intervals; resolved via multi-bar autocorrelation |
+    | **Phrasing (16/32-Beat Blocks)**| Major section changes, drop transitions, structural energy shifts | Long-lag envelope modulation ($16\tau_0, 32\tau_0$) or novelty curves |
     """)
     return
 
@@ -106,6 +107,17 @@ def render_part3_theory(mo):
     $$\text{BPM}(\tau) = \frac{60 \times f_s}{H \times \tau}$$
 
     Where $f_s$ is the audio sampling rate and $H$ is the STFT hop length.
+
+    ---
+
+    ### Why Autocorrelation Handles Syncopation
+    In funk, breakbeats, or garage, drums frequently play **syncopated hits**—accents on unexpected subdivisions (such as an 8th-note offbeat or a 16th-note anticipation) while leaving the expected onbeat empty.
+    
+    If an algorithm only inspects individual bars locally with a simple peak detector, the loudest spike might land on an offbeat, causing a phase error (misplaced downbeat) or octave confusion.
+    
+    Because autocorrelation integrates products over an extended multi-bar window ($4$ to $8$ bars):
+    - Syncopated offbeats occur irregularly or at partial submultiples, so their cross-products remain diffuse.
+    - The true metric grid ($T_{\text{beat}}$ and $4T_{\text{beat}}$) consistently reinforces itself at every measure through **constructive interference**, emerging as the dominant global lag peak.
     """)
     return
 
