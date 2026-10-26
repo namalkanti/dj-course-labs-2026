@@ -26,7 +26,7 @@ def render_foundations(mo):
     mo.md(r"""
     ## Part 1: Audio Quality Fundamentals for DJs
 
-    Audio fidelity matters the moment your music hits a real club sound system. Playing low-bitrate or ripped tracks through massive club speakers reveals harsh artifacts, muffled highs, and flabby kicks that you might not notice on AirPods.
+    Audio quality matters when preparing a set. Lossy encoding can introduce audible artifacts, but whether you notice them depends on the source, encoder, playback equipment, processing, and listening conditions. A larger or louder sound system does not automatically make every difference audible.
 
     A pervasive problem in DJing is the **fake transcode** (taking a free 128 kbps MP3 or a YouTube rip and re-saving it as a "320 kbps MP3" or "WAV"). While Rekordbox and CDJ screens will show a high bitrate or lossless format, the underlying audio is permanently compromised.
 
@@ -40,9 +40,9 @@ def render_foundations(mo):
     ---
 
     ### 1.2 Bit Depth: 16-bit vs 24-bit
-    - **16-bit is all you need for DJing**: 16-bit provides 96 dB of clean volume range. In a loud club where the crowd and room noise is already 75–80 dB, the background noise floor of a 16-bit track is completely inaudible.
-    - **24-bit is for recording studios**: Music producers record in 24-bit because they need a large safety cushion (headroom) so loud vocals or drum hits don't accidentally clip and distort while recording.
-    - **DJ Takeaway**: Buying or converting your club tracks to 24-bit does **not** improve sound quality. It just adds trailing empty zeros, making files 50% larger for zero audible gain. 16-bit / 44.1 kHz is standard club master quality.
+    - **16-bit is generally sufficient for DJ playback**: It offers roughly 96 dB of dynamic range. With proper preparation and gain staging, quantization noise is typically not the limiting factor in a club.
+    - **24-bit is useful for production**: Its lower quantization noise allows recording at conservative levels and supports subsequent processing. It does not raise the digital clipping ceiling.
+    - **DJ Takeaway**: Converting a 16-bit source to 24-bit cannot recover information. A genuine 24-bit release can contain additional low-level detail, but properly prepared 16-bit audio is generally sufficient for DJ playback.
 
     ---
 
@@ -54,22 +54,22 @@ def render_foundations(mo):
     | Format | Type | Compression | Metadata / Tagging Support | Club / CDJ Compatibility | Best Use Case |
     |---|---|---|---|---|---|
     | **WAV** | Lossless | None (Raw PCM) | **Poor**: ID3 tagging is non-standard. Hot cues, album art, and artist tags often get stripped when moving between Rekordbox USBs. | Universal across all CDJ models. | Studio recording, raw stem export. |
-    | **AIFF** | Lossless | None (Raw PCM) | **Excellent**: Native ID3 tag chunk support. Artwork, cues, and metadata never get dropped. | Universal across all CDJ models. | **The touring DJ gold standard**. Bit-for-bit identical to WAV with bulletproof metadata. |
+    | **AIFF** | Lossless | None (Raw PCM) | Supports ID3 chunks for descriptive metadata; cue/export behavior depends on software. | Universal across all CDJ models. | A practical PCM option with metadata support; verify your export workflow. |
     | **FLAC** | Lossless | Compressed (~50% size, like a ZIP for audio) | **Excellent**: Vorbis comments preserve all track metadata and album art. | CDJ-2000NXS2, CDJ-3000, and Opus-Quad only. Older club gear (CDJ-900, CDJ-2000 Nexus) cannot play it. | Archival, home listening, modern festival stages. |
-    | **MP3** | Lossy | Heavy (~80–90% size reduction) | **Excellent**: Full ID3v2 tag support. | Universal across all CDJ models. | Legitimate **320 kbps** is club-ready and saves USB space; **< 256 kbps** or rips degrade club sound. |
+    | **MP3** | Lossy | Heavy (~80–90% size reduction) | **Excellent**: Full ID3v2 tag support. | Universal across all CDJ models. | Legitimate **320 kbps** is club-ready and saves USB space; lower bitrates increase artifact risk, depending on source and encoding. |
 
     ---
 
     ### 1.4 How MP3 Compression Works (And Why Low Bitrates Sound Bad)
     Uncompressed audio takes up ~10 MB per minute. To make smaller files, MP3 uses **psychoacoustics**: discarding sounds the human ear is less likely to notice (like quiet frequencies playing at the same time as a loud kick drum).
 
-    - **320 kbps (High Quality)**: The encoder has plenty of data budget. It only trims frequencies that are genuinely masked by your ear. Full spectrum up to 20+ kHz is preserved. Sounds virtually indistinguishable from WAV in a blind test.
+    - **320 kbps (High Quality)**: A good encoder has more budget to reduce perceptually important errors. Bandwidth depends on settings; well-encoded files are often difficult to distinguish from the source in controlled listening.
     - **128 kbps (Low Quality / YouTube Rips)**: The encoder runs out of data space and makes aggressive cuts:
-      - It applies a hard **brick-wall cutoff at 16 kHz**, permanently deleting all high-frequency sparkle (cymbals, snare sizzle, reverb tails).
-      - It heavily distorts transients, turning tight drum hits into mush.
-    - **Why 192 kbps still isn't club-ready**:
-      - Even though 192 kbps reaches ~18 kHz, the encoder squashes high frequencies into **mono** (Intensity Stereo) to save space, collapsing the 3D stereo width on wide club sound systems.
-      - The steep digital filter also smears the timing of high-hats and snares, making the mix sound flat, fatiguing, and harsh at high club volumes.
+      - Some encoder settings low-pass near **16 kHz**. The exact cutoff depends on the encoder and settings, not bitrate alone.
+      - Quantization and temporal artifacts can affect transients, with audibility depending on the material.
+    - **What about 192 kbps?**
+      - It often preserves more information than 128 kbps, but bitrate alone does not specify bandwidth, stereo behavior, or perceptual quality.
+      - Prefer trusted sources and avoid unnecessary lossy re-encoding. Treat listening and spectral inspection as complementary checks, not a universal bitrate pass/fail test.
 
     ---
 
@@ -266,8 +266,8 @@ def make_analysis_tabs_helper(
 
         card_wf = mo.vstack([
             mo.md(
-                "##### Rekordbox 3-Band Waveform (DJ View)\n"
-                "_Time-domain energy envelope split into Rekordbox 3-band crossovers: "
+                "##### DJ-Style 3-Band Waveform (Illustrative Model)\n"
+                "_Time-domain energy envelope split using this lab's illustrative crossovers: "
                 "**Cyan** (Low, <250 Hz), **Orange** (Mid, 250–2500 Hz), **Blue** (High, >2500 Hz)._"
             ),
             img_wf,
@@ -410,26 +410,22 @@ def exercise_2_codec_cutoff_simulation(
 
     # 2. Honest Educational Callout
     _callout_note = mo.md(
-        "> #### 🔍 The Psychoacoustic Paradox: Why It Sounds Fine Here (And Fails in the Booth)\n"
+        "> #### Listening and Spectral Inspection Answer Different Questions\n"
         ">\n"
-        "> **1. The Auditory Illusion on Headphones:**\n"
+        "> **1. Listening on Headphones:**\n"
         "> Switch between **Lossless Master** and **128 kbps** above and listen carefully. "
-        "On music tracks like *Persistence*, you will struggle to hear any difference. "
-        "That is not a defect in your hearing—it is proof of how effective MP3 psychoacoustic masking is at moderate listening volumes. "
-        "In finished master tracks, energy above 16 kHz is already ~28 dB quieter than the drums and bass (< 0.1% of total power), "
-        "and consumer headphones roll off naturally.\n"
+        "In our comparisons on tracks like *Persistence*, differences were difficult to identify by ear. Your results may differ. "
+        "Difficulty hearing a difference is consistent with effective perceptual encoding; it does not establish that the signals are identical. "
+        "High-frequency energy can be much weaker than bass and midrange; hearing, playback response, and listening conditions also affect what you can detect.\n"
         ">\n"
         "> **2. What the Microscope Sees:**\n"
-        "> Look at the **High-Freq Shelf** and **2D Spectrogram** tabs below. While your ears cannot detect the cut, "
-        "the spectral math proves that **every harmonic above 16 kHz has been permanently erased** from the MP3 file.\n"
+        "> Look at the **High-Freq Shelf** and **2D Spectrogram** tabs below. Even when a difference is not apparent by ear, "
+        "these plots can reveal high-frequency attenuation that is difficult to hear. Its location and depth depend on the encoder settings and source.\n"
         ">\n"
-        "> **3. The Club Sound System Liability:**\n"
-        "> Audio fidelity is an **invisible liability**. In a bedroom on AirPods, a 128 kbps YouTube rip sounds passable. "
-        "But when that same file hits a **105 dB SPL club sound system with high-compression horn tweeters**, "
-        "missing top-end air causes acoustic fatigue, transients lose punch, and mixing against pristine tracks exposes a jarring drop in energy. "
-        "If you key-shift or time-stretch the track on a CDJ, the missing phase information creates robotic artifacts.\n"
+        "> **3. Practical Preparation:**\n"
+        "> Different playback systems, adjacent tracks, and pitch/time processing may expose artifacts that were not obvious in an initial audition; they do not guarantee that a difference becomes audible. Increasing volume is not a reliable or safe quality test.\n"
         ">\n"
-        "> **The DJ Rule of Thumb**: *Never audit audio quality with your ears. Ears adapt and deceive; spectral analysis does not.*"
+        "> **The DJ Rule of Thumb**: *Do not rely on listening alone to establish provenance. Prefer trusted sources; use listening to assess audible problems and spectral inspection to investigate bandwidth. Neither a cutoff nor its absence certifies encoding history.*"
     )
 
     # 3. Side-by-Side and Overlaid Analytical Tabs (via helper)
@@ -541,7 +537,7 @@ def exercise_3_upload_inspector(
             mo.md(
                 "_Upload any audio file from your personal collection above. "
                 "The lab will render its high-frequency shelf, 2D spectrogram, "
-                "and run an automated cutoff detection audit to verify its authenticity._"
+                "and run a heuristic cutoff inspection. This cannot verify authenticity or encoding history._"
             ),
         ], gap=1.2)
     else:
@@ -573,22 +569,22 @@ def exercise_3_upload_inspector(
             badge_color = "#f44336"  # Red alert
             icon = "⚠️"
         else:
-            badge_color = "#4caf50"  # Green pass
-            icon = "✅"
+            badge_color = "#607d8b"  # Neutral: absence of a flag is not verification
+            icon = "ℹ️"
 
         verdict_card = mo.md(
             f"""
             <div style="border: 2px solid {badge_color}; border-radius: 8px; padding: 12px 18px; margin: 8px 0; background-color: rgba(0,0,0,0.03);">
                 <div style="font-size: 1.15em; font-weight: bold; color: {badge_color};">
-                    {icon} Automated Quality Verdict: {analysis.verdict}
+                    {icon} Spectral Inspection: {analysis.verdict}
                 </div>
                 <div style="margin-top: 6px; font-size: 0.95em;">
                     • <b>Detected High-Frequency Cutoff:</b> <code>{analysis.detected_cutoff_hz:,.0f} Hz</code><br>
-                    • <b>Stopband Attenuation:</b> <code>{analysis.stopband_attenuation_db:.1f} dB</code><br>
-                    • <b>Confidence:</b> <code>{analysis.confidence * 100:.0f}%</code>
+                    • <b>Stopband Attenuation:</b> <code>{analysis.stopband_attenuation_db:.1f} dB</code>
                 </div>
                 <div style="margin-top: 6px; font-size: 0.85em; color: #666;">
-                    {"<b>Warning:</b> Spectral energy plummets into the noise floor below 19.5 kHz. Despite container metadata claiming high quality, this audio source was permanently bandlimited." if analysis.is_suspicious_transcode else "<b>Verified:</b> Spectral harmonics extend cleanly into the 20+ kHz register without unnatural brick-wall roll-off."}
+                    {"<b>What this suggests:</b> The high-frequency cutoff resembles patterns seen in some lower-bitrate MP3 encodings. The bitrate in the label is a rough comparison, not a measurement of the original file's bitrate. Other encoder settings or filtering during production can produce similar results; this is a clue, not proof." if analysis.is_suspicious_transcode else "<b>What this means:</b> We did not find the cutoff pattern used to flag possible lower-bitrate sources, or this passage had insufficient energy for analysis. This does not certify lossless audio or a high-bitrate source."}
+                    <br>Try another passage and consider the file's source alongside listening and spectral inspection.
                 </div>
             </div>
             """
@@ -646,7 +642,7 @@ def render_translation_table(mo):
 
     | DJ Concept / Terminology | Domain | Physical DSP Implementation | Question to Validate with Instructor |
     |---|---|---|---|
-    | **"3-Band RGB Waveform"** *(The Lows, Mids, & Highs)* | Time Domain (Colored Envelope) | **3-Band Butterworth IIR Filterbank + RMS Envelope Pooling**: Audio is split into Low (<250 Hz, Cyan), Mid (250–2500 Hz, Amber), and High (>=2500 Hz, Blue), followed by 256-sample RMS envelope pooling. *(Note: Because the blue band spans 2.5–22.05 kHz, a 16 kHz cutoff barely changes the blue height, making CDJ screens blind to fake transcodes).* | *"Does this 3-color envelope separation match what you look for when reading drops and breakdowns on a CDJ-3000 screen?"* |
+    | **"3-Band RGB Waveform"** *(The Lows, Mids, & Highs)* | Time Domain (Colored Envelope) | **Illustrative 3-Band Butterworth IIR Filterbank + RMS Envelope Pooling** (not a verified reconstruction of Pioneer internals): Audio is split into Low (<250 Hz, Cyan), Mid (250–2500 Hz, Amber), and High (>=2500 Hz, Blue), followed by 256-sample RMS envelope pooling. *(Note: Because the blue band spans 2.5–22.05 kHz, a 16 kHz cutoff barely changes the blue height, making this broad-band view a poor tool for investigating high-frequency cutoffs).* | *"Does this 3-color envelope separation match what you look for when reading drops and breakdowns on a CDJ-3000 screen?"* |
     | *[DJ Term: Tonal Balance / Master EQ Curve]* | Frequency Domain (1D Curve) | **Welch Averaged Power Spectral Density (PSD)**: Multi-window Fourier analysis ($N=2048$, Hann window, 75% overlap) averaged over time and plotted on a musical log-frequency scale (20 Hz to 22.05 kHz). | *"When DJs or mastering engineers evaluate the overall tonal balance (sub-bass vs. treble tilt) of a track, what do you usually call this full-frequency curve?"* |
     | *[DJ Term: Spek View / Transcode Heatmap]* | Joint Time-Frequency Domain (2D Heatmap) | **2D Short-Time Fourier Transform (STFT)**: Sliding window FFT mapping time (x-axis) vs. frequency bins up to 22.05 kHz (y-axis), with color intensity indicating decibel power (dBFS). Clearly reveals horizontal cutoff voids. | *"Have you or fellow DJs used software like Spek to check for fake 320 kbps files? What term do you and other selectors use for this frequency-time heatmap?"* |
     """)

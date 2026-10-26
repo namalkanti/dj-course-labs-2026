@@ -163,20 +163,18 @@ class RGBBlendedWaveformView:
 
 @dataclass(frozen=True)
 class CutoffDetectionAnalysis:
-    """Automated high-frequency cutoff profiling and transcode authenticity verdict.
+    """Heuristic high-frequency cutoff profiling; not a provenance assessment.
 
     Attributes:
         detected_cutoff_hz: Estimated brick-wall lowpass cutoff frequency in Hz.
         peak_shelf_db: Reference peak power level in the upper register (10–22 kHz).
         noise_floor_db: Average power level in the post-cutoff stopband.
         stopband_attenuation_db: Difference in dB between shelf reference and stopband noise floor.
-        verdict: Plain-English authenticity classification.
-                 - "Genuine Lossless / 320k"
-                 - "Likely 192k Transcode"
-                 - "Likely 128k Transcode"
-                 - "Low-Quality / Bandlimited"
-        is_suspicious_transcode: True if file exhibits a brick-wall cutoff < 19.5 kHz.
-        confidence: Estimated confidence score in [0.0, 1.0].
+        verdict: Plain-English description of the heuristic's bandlimiting flag.
+        is_suspicious_transcode: Legacy name for the bandwidth/attenuation flag;
+                                does not establish that transcoding occurred.
+        confidence: Legacy fixed heuristic score in [0.0, 1.0], uncalibrated and
+                    not a probability of provenance or perceptual quality.
     """
 
     detected_cutoff_hz: float

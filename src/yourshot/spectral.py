@@ -183,13 +183,13 @@ def analyze_spectral_cutoff(
     fs: int = 44100,
     window_length: int = 2048,
 ) -> CutoffDetectionAnalysis:
-    """Analyze high-frequency spectral roll-off and classify codec authenticity.
+    """Inspect high-frequency roll-off using a bandwidth/attenuation heuristic.
 
-    Examines the top register (10 kHz to Nyquist) using Welch PSD. Detects
-    brick-wall lowpass filters characteristic of lossy MP3 compression:
-    - ~16.0 kHz indicates ~128 kbps CBR (or YouTube web rip).
-    - ~18.5 kHz indicates ~192 kbps CBR.
-    - >= 20.0 kHz indicates genuine 320 kbps MP3 or lossless master.
+    Examines the top register (10 kHz to Nyquist) using Welch PSD. Low-pass
+    patterns can be consistent with lossy encoding, mastering, or other filtering.
+    Neither a cutoff nor its absence establishes bitrate or encoding history.
+    The legacy confidence field contains fixed, uncalibrated heuristic scores,
+    not probabilities of authenticity.
 
     Args:
         audio: 1D monophonic float array of audio samples.
@@ -254,21 +254,21 @@ def analyze_spectral_cutoff(
             noise_floor = float(test_power[-1])
 
         attenuation = float(ref_db - noise_floor)
-        # Natural music roll-off is gradual (~15 dB drop). A lossy brick wall drops >= 28 dB.
+        # Heuristic thresholds, not a general distinction between mastering and codecs.
         is_suspicious = (detected_cutoff < 19500.0) and (attenuation >= 28.0)
 
-    # Assign Plain-English classification verdict
+    # Offer familiar codec comparisons as clues, not provenance certification.
     if detected_cutoff >= 20000.0 or not is_suspicious:
-        verdict = "Genuine Lossless / 320k"
+        verdict = "No obvious signs of a low-bitrate cutoff"
         confidence = 0.95
     elif detected_cutoff < 17200.0:
-        verdict = "Likely 128k Transcode"
+        verdict = "Possible 128 kbps MP3-like source"
         confidence = 0.92
     elif detected_cutoff < 19500.0:
-        verdict = "Likely 192k Transcode"
+        verdict = "Possible lower-bitrate source — roughly 192 kbps MP3-like"
         confidence = 0.88
     else:
-        verdict = "Low-Quality / Bandlimited"
+        verdict = "Bandlimiting flagged"
         confidence = 0.75
 
     return CutoffDetectionAnalysis(

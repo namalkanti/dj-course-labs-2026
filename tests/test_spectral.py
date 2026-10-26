@@ -163,7 +163,7 @@ def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, c
 
 
 def test_cutoff_detection_pristine_wideband():
-    """Wideband noise or high-register chirp extending to 20k+ must yield >= 20 kHz cutoff and Genuine verdict."""
+    """The wideband fixture yields >= 20 kHz cutoff without a suspicious flag."""
     from yourshot.synth import generate_white_noise
     fs = 44100
     noise = generate_white_noise(duration_sec=2.0, fs=fs)
@@ -171,15 +171,15 @@ def test_cutoff_detection_pristine_wideband():
 
     assert isinstance(analysis, CutoffDetectionAnalysis)
     assert analysis.detected_cutoff_hz >= 20000.0
-    assert analysis.verdict == "Genuine Lossless / 320k"
+    assert analysis.verdict == "No obvious signs of a low-bitrate cutoff"
     assert not analysis.is_suspicious_transcode
 
 
 @pytest.mark.parametrize(
     "simulated_cutoff, expected_verdict, expected_range",
     [
-        (16000.0, "Likely 128k Transcode", (15500.0, 16800.0)),
-        (18500.0, "Likely 192k Transcode", (18000.0, 19200.0)),
+        (16000.0, "Possible 128 kbps MP3-like source", (15500.0, 16800.0)),
+        (18500.0, "Possible lower-bitrate source — roughly 192 kbps MP3-like", (18000.0, 19200.0)),
     ],
 )
 def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected_verdict: str, expected_range: Tuple[float, float]):
