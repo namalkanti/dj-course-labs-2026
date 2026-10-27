@@ -1,4 +1,4 @@
-# Week 1 Lab: Audio Quality, Codec Analysis & Transcode Detection
+# Audio Quality Lab: Codec Analysis & Transcode Detection
 
 An interactive digital signal processing lab analyzing lossy vs lossless audio compression, psychoacoustic filtering, and automated detection of upsampled/transcoded files.
 
@@ -14,12 +14,11 @@ When preparing tracks for high-SPL sound systems, lossy compression artifacts an
 Run using `uv` from the workspace root or directory:
 
 ```bash
-uv run marimo edit wk1/quality_lab.py
+uv run marimo edit quality/quality_lab.py
 ```
 
 Or view as a standalone read-only app:
 
 ```bash
-uv run marimo run wk1/quality_lab.py
+uv run marimo run quality/quality_lab.py
 ```
-

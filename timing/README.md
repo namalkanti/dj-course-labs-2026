@@ -1,4 +1,4 @@
-# Week 2 Lab: Timing, Tempo, Meter & Phrase Architecture
+# Timing Lab: Tempo, Meter & Phrase Architecture
 
 An interactive digital signal processing lab exploring the DJ metric hierarchy—beats, bars, phrases, and meters—using spectral flux onset envelopes, autocorrelation tempo estimation, and time signature discrimination.
 
@@ -17,12 +17,11 @@ When preparing DJ sets, commercial software (e.g. Rekordbox) can stumble on trac
 Run using `uv` from the workspace root or directory:
 
 ```bash
-uv run marimo edit wk2/timing_lab.py
+uv run marimo edit timing/timing_lab.py
 ```
 
 Or view as a standalone read-only app:
 
 ```bash
-uv run marimo run wk2/timing_lab.py
+uv run marimo run timing/timing_lab.py
 ```
-

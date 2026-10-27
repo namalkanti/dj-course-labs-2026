@@ -1,7 +1,7 @@
 """Audio catalog providing synthetic signals and real reference audio fixtures.
 
 Designed for reproducible audio quality analysis, transcode detection,
-and DSP visualization across YourShot labs.
+and DSP visualization across the DJ curriculum.
 """
 
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import soundfile as sf
 
-from yourshot.synth import (
+from dj_dsp.synth import (
     generate_chirp,
     generate_drum_loop,
     generate_linear_chirp,
@@ -31,8 +31,8 @@ class AudioEntry:
 
 def get_default_fixtures_dir() -> Path:
     """Resolve default fixtures path at labs/audio_catalog."""
-    # This file is at labs/src/yourshot/audio_catalog.py
-    # parents: [0]=yourshot, [1]=src, [2]=labs
+    # This file is at labs/src/dj_dsp/audio_catalog.py.
+    # parents: [0]=dj_dsp, [1]=src, [2]=labs
     labs_root = Path(__file__).resolve().parents[2]
     return labs_root / "audio_catalog"
 

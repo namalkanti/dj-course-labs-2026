@@ -14,7 +14,7 @@ def init_marimo():
 @app.cell(hide_code=True)
 def render_header(mo):
     mo.md(r"""
-    # Week 1 Lab: Audio Quality Verification, Codec Analysis & Transcode Detection
+    # Audio Quality Lab: Codec Analysis & Transcode Detection
 
     *An interactive digital signal processing lab analyzing lossy vs. lossless audio compression, psychoacoustic filtering, and automated detection of upsampled/transcoded files.*
     """)
@@ -94,20 +94,20 @@ def load_dsp_modules():
     import numpy as np
     from scipy import signal
     import soundfile as sf
-    from yourshot.synth import apply_lossy_cutoff, encode_mp3_lame
+    from dj_dsp.synth import apply_lossy_cutoff, encode_mp3_lame
 
     return apply_lossy_cutoff, encode_mp3_lame, io, np, plt, sf
 
 
 @app.cell
 def load_plotting():
-    from yourshot.spectral import (
+    from dj_dsp.spectral import (
         analyze_spectral_cutoff,
         compute_welch_spectrum,
         compute_stft_spectrogram,
         compute_three_band_waveform,
     )
-    from yourshot.plotting import (
+    from dj_dsp.plotting import (
         plot_overlaid_welch_shelf,
         plot_welch_spectrum,
         plot_stft_spectrogram,
@@ -128,7 +128,7 @@ def load_plotting():
 
 @app.cell
 def get_catalog_and_fs():
-    from yourshot.audio_catalog import load_audio_catalog
+    from dj_dsp.audio_catalog import load_audio_catalog
     catalog, fs = load_audio_catalog(fs=44100)
     return catalog, fs
 
@@ -638,7 +638,7 @@ def render_translation_table(mo):
 
     In this lab, we computed three distinct mathematical projections of audio signals. A DJ looking at a CDJ screen or prep software sees familiar musical tools, while a DSP engineer sees filterbanks and Fourier transforms.
 
-    Use this table to connect the physical math to DJ booth practice, and discuss the open terminology with your YourShot instructor during your 1-on-1 session.
+    Use this table to connect the physical math to DJ booth practice, and discuss the open terminology with your instructor during a feedback session.
 
     | DJ Concept / Terminology | Domain | Physical DSP Implementation | Question to Validate with Instructor |
     |---|---|---|---|

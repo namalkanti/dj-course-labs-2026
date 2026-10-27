@@ -2338,7 +2338,7 @@ wheels = [
 ]
 
 [[package]]
-name = "yourshot"
+name = "dj-dsp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

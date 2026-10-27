@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from scipy import signal
 
-from yourshot.synth import (
+from dj_dsp.synth import (
     apply_lossy_cutoff,
     generate_chirp,
     generate_drum_loop,
@@ -427,4 +427,3 @@ def assert_beat_intervals_accelerate(
     expected_late_int = 60.0 / late_bpm_approx
     assert early_interval == pytest.approx(expected_early_int, rel=0.15)
     assert late_interval == pytest.approx(expected_late_int, rel=0.15)
-

@@ -1,4 +1,4 @@
-"""Minimal Matplotlib rendering functions for yourshot spectral views.
+"""Minimal Matplotlib rendering functions for dj_dsp spectral views.
 
 Follows clean plotting conventions:
 - Pure rendering: functions consume typed *View dataclasses and draw onto provided or new Axes.
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-from yourshot.spectral_data import (
+from dj_dsp.spectral_data import (
     RGBBlendedWaveformView,
     SpectrogramView,
     SpectrumView,
@@ -284,4 +284,3 @@ def plot_overlaid_welch_shelf(
     ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     return fig, ax
-

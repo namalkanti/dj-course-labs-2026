@@ -19,7 +19,7 @@ def init_marimo():
 @app.cell(hide_code=True)
 def render_header(mo):
     mo.md(r"""
-    # Week 2 Lab: Timing, Tempo, Meter & Phrase Architecture
+    # Timing Lab: Tempo, Meter & Phrase Architecture
 
     *An interactive digital signal processing lab exploring the DJ timing hierarchy—Beats, Bars, Phrases, and Time Signatures—using Spectral Flux, Envelope Autocorrelation, and Tempograms.*
     """)
@@ -148,7 +148,7 @@ def render_part4_theory(mo):
     mo.md(r"""
     ## Part 4: Bar & Meter Discrimination ($4/4$ vs $3/4$ / $6/8$)
 
-    In physical DJ practice (YourShot Week 2), mixing a 3/4 waltz or a 6/8 polyrhythm into standard 4/4 house music guarantees clashing phrase drops.
+    In DJ booth practice, mixing a 3/4 waltz or a 6/8 polyrhythm into standard 4/4 house music can cause clashing phrase drops.
 
     Once the primary beat interval $\tau_0$ is known:
     - In **4/4 meter**, musical accents fall on every 4th beat (the downbeat). Therefore, autocorrelation exhibits high energy at integer multiples: $\tau = 4\tau_0, 8\tau_0, \dots$

@@ -2,7 +2,11 @@
   "include": [
     "src",
     "tests",
-    "wk*"
+    "primer",
+    "quality",
+    "timing",
+    "eq",
+    "harmonics_transitions"
   ],
   "exclude": [
     "**/__pycache__",
@@ -11,51 +15,11 @@
   "reportUnusedExpression": "warning",
   "executionEnvironments": [
     {
-      "root": "wk1",
+      "root": "quality",
       "reportUnusedExpression": "none"
     },
     {
-      "root": "wk2",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk3",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk4",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk5",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk6",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk7",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk8",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk9",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk10",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk11",
-      "reportUnusedExpression": "none"
-    },
-    {
-      "root": "wk12",
+      "root": "timing",
       "reportUnusedExpression": "none"
     }
   ]

@@ -1,7 +1,7 @@
 """Pure functional DSP transformations producing spectral lenses/views.
 
 All functions are pure: they accept NumPy audio arrays and sampling parameters,
-and return typed, frozen view dataclasses defined in yourshot.spectral_data:
+and return typed, frozen view dataclasses defined in dj_dsp.spectral_data:
 - compute_welch_spectrum -> SpectrumView
 - compute_stft_spectrogram -> SpectrogramView
 - compute_three_band_waveform -> ThreeBandWaveformView
@@ -11,7 +11,7 @@ from typing import Optional
 import numpy as np
 import scipy.signal as signal
 
-from yourshot.spectral_data import (
+from dj_dsp.spectral_data import (
     CutoffDetectionAnalysis,
     SpectrogramView,
     SpectrumView,
@@ -126,7 +126,7 @@ def compute_three_band_waveform(
 
     Then performs block-wise RMS pooling over windows of hop_length samples.
     (Note: Standard Butterworth is optimal for envelope extraction; Linkwitz-Riley
-    is only required when summing filtered bands back into audible audio, as in Week 3).
+    is only required when summing filtered bands back into audible audio, as in the EQ module).
 
     Args:
         audio: 1D NumPy array of audio samples.
@@ -280,4 +280,3 @@ def analyze_spectral_cutoff(
         is_suspicious_transcode=is_suspicious,
         confidence=float(confidence),
     )
-

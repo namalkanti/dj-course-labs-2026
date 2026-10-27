@@ -15,14 +15,14 @@ from typing import Tuple
 import numpy as np
 import pytest
 
-from yourshot.spectral_data import (
+from dj_dsp.spectral_data import (
     CutoffDetectionAnalysis,
     RGBBlendedWaveformView,
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
 )
-from yourshot.spectral import (
+from dj_dsp.spectral import (
     analyze_spectral_cutoff,
     compute_stft_spectrogram,
     compute_three_band_waveform,
@@ -164,7 +164,7 @@ def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, c
 
 def test_cutoff_detection_pristine_wideband():
     """The wideband fixture yields >= 20 kHz cutoff without a suspicious flag."""
-    from yourshot.synth import generate_white_noise
+    from dj_dsp.synth import generate_white_noise
     fs = 44100
     noise = generate_white_noise(duration_sec=2.0, fs=fs)
     analysis = analyze_spectral_cutoff(noise, fs=fs)
@@ -184,7 +184,7 @@ def test_cutoff_detection_pristine_wideband():
 )
 def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected_verdict: str, expected_range: Tuple[float, float]):
     """Lowpass-filtered signals must accurately identify the cutoff frequency and flag as suspicious transcode."""
-    from yourshot.synth import apply_lossy_cutoff, generate_white_noise
+    from dj_dsp.synth import apply_lossy_cutoff, generate_white_noise
     fs = 44100
     noise = generate_white_noise(duration_sec=2.0, fs=fs)
     filtered = apply_lossy_cutoff(noise, cutoff_hz=simulated_cutoff, fs=fs, order=10)

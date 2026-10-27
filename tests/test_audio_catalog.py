@@ -1,4 +1,4 @@
-"""Unit tests for yourshot.audio_catalog.
+"""Unit tests for dj_dsp.audio_catalog.
 
 Uses self-documenting assertion helpers grouped at the bottom to verify fixture
 directory presence, track existence, non-emptiness, finiteness, and immutability.
@@ -7,7 +7,7 @@ directory presence, track existence, non-emptiness, finiteness, and immutability
 from pathlib import Path
 import numpy as np
 
-from yourshot.audio_catalog import (
+from dj_dsp.audio_catalog import (
     get_default_fixtures_dir,
     load_audio_catalog,
 )
