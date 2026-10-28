@@ -643,11 +643,11 @@ def render_translation_table(mo):
 
     Use this table to connect the physical math to DJ booth practice, and discuss the open terminology with your instructor during a feedback session.
 
-    | DJ Concept / Terminology | Domain | Physical DSP Implementation | Question to Validate with Instructor |
+    | DJ Concept / Terminology | Domain | Physical DSP Implementation | Instructor Notes|
     |---|---|---|---|
     | **"3-Band RGB Waveform"** *(The Lows, Mids, & Highs)* | Time Domain (Colored Envelope) | **Illustrative 3-Band Butterworth IIR Filterbank + RMS Envelope Pooling** (not a verified reconstruction of Pioneer internals): Audio is split into Low (<250 Hz, Cyan), Mid (250–2500 Hz, Amber), and High (>=2500 Hz, Blue), followed by 256-sample RMS envelope pooling. *(Note: Because the blue band spans 2.5–22.05 kHz, a 16 kHz cutoff barely changes the blue height, making this broad-band view a poor tool for investigating high-frequency cutoffs).* | *"Does this 3-color envelope separation match what you look for when reading drops and breakdowns on a CDJ-3000 screen?"* |
-    | *[DJ Term: Tonal Balance / Master EQ Curve]* | Frequency Domain (1D Curve) | **Welch Averaged Power Spectral Density (PSD)**: Multi-window Fourier analysis ($N=2048$, Hann window, 75% overlap) averaged over time and plotted on a musical log-frequency scale (20 Hz to 22.05 kHz). | *"When DJs or mastering engineers evaluate the overall tonal balance (sub-bass vs. treble tilt) of a track, what do you usually call this full-frequency curve?"* |
-    | *[DJ Term: Spek View / Transcode Heatmap]* | Joint Time-Frequency Domain (2D Heatmap) | **2D Short-Time Fourier Transform (STFT)**: Sliding window FFT mapping time (x-axis) vs. frequency bins up to 22.05 kHz (y-axis), with color intensity indicating decibel power (dBFS). Clearly reveals horizontal cutoff voids. | *"Have you or fellow DJs used software like Spek to check for fake 320 kbps files? What term do you and other selectors use for this frequency-time heatmap?"* |
+    | Tonal Balance / Master EQ Curve | Frequency Domain (1D Curve) | **Welch Averaged Power Spectral Density (PSD)**: Multi-window Fourier analysis ($N=2048$, Hann window, 75% overlap) averaged over time and plotted on a musical log-frequency scale (20 Hz to 22.05 kHz). | *"When DJs or mastering engineers evaluate the overall tonal balance (sub-bass vs. treble tilt) of a track, what do you usually call this full-frequency curve?"* |
+    |Spek View / Transcode Heatmap| Joint Time-Frequency Domain (2D Heatmap) | **2D Short-Time Fourier Transform (STFT)**: Sliding window FFT mapping time (x-axis) vs. frequency bins up to 22.05 kHz (y-axis), with color intensity indicating decibel power (dBFS). Clearly reveals horizontal cutoff voids. | *"Have you or fellow DJs used software like Spek to check for fake 320 kbps files? What term do you and other selectors use for this frequency-time heatmap?"* |
     """)
     return
 
