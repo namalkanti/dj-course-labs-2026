@@ -15,6 +15,7 @@ from dj_dsp.synth import apply_lossy_cutoff, generate_drum_loop
 
 
 def test_cli_help():
+    """Verify that CLI root command displays help output and succeeds with exit code 0."""
     runner = CliRunner()
     result = runner.invoke(main, ["--help"])
     assert_command_succeeded(result)
@@ -22,6 +23,7 @@ def test_cli_help():
 
 
 def test_cli_check_quality_flac():
+    """Verify that `check-quality` recognizes a lossless FLAC fixture as full bandwidth."""
     runner = CliRunner()
     flac_path = Path("audio_catalog/persistence_by_dabmasterars_snippet.flac")
     if not flac_path.exists():
@@ -33,6 +35,12 @@ def test_cli_check_quality_flac():
 
 
 def test_cli_check_quality_json_transcode(tmp_path: Path):
+    """Verify that `check-quality -j` reports transcode status in JSON with non-zero exit code.
+
+    Invariants:
+    - CLI returns exit code 1 to indicate suspicious low-bitrate transcode.
+    - JSON output contains `is_suspicious_transcode: true` and `detected_cutoff_hz < 19.5 kHz`.
+    """
     fs = 44100
     groove = generate_drum_loop(duration_sec=3.0, fs=fs)
     cut_audio = apply_lossy_cutoff(groove, cutoff_hz=16000.0, fs=fs)
@@ -48,6 +56,7 @@ def test_cli_check_quality_json_transcode(tmp_path: Path):
 
 
 def test_cli_plot_shelf_to_file(tmp_path: Path):
+    """Verify that `plot-shelf` writes a non-empty PNG spectral plot file to disk."""
     fs = 44100
     groove = generate_drum_loop(duration_sec=2.0, fs=fs)
     test_file = tmp_path / "audio.wav"

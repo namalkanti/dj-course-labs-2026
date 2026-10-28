@@ -19,12 +19,25 @@ from dj_dsp.audio_catalog import (
 
 
 def test_default_fixtures_dir_exists():
+    """Verify that the default audio fixtures directory exists and contains a README.
+
+    Invariants:
+    - Fixtures directory path exists as a directory on disk.
+    - README.md exists within the fixtures directory as standard documentation.
+    """
     fixtures_dir = get_default_fixtures_dir()
     assert fixtures_dir.exists(), f"Fixtures dir not found at {fixtures_dir}"
     assert_file_exists(fixtures_dir / "README.md")
 
 
 def test_load_audio_catalog_structure():
+    """Verify that the audio catalog loads with expected keys, sample rate, and valid signals.
+
+    Invariants:
+    - Returned sampling rate matches requested sample rate (44100 Hz).
+    - Catalog contains both synthetic benchmark signals and real audio fixtures.
+    - Each catalog entry is a non-empty, 1D, finite, read-only NumPy array.
+    """
     expected_fs = 44100
     catalog, fs = load_audio_catalog(fs=expected_fs)
     assert fs == expected_fs

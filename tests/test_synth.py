@@ -31,6 +31,13 @@ from dj_dsp.synth import (
 
 
 def test_white_noise_spectral_flatness_and_level():
+    """Verify white noise generator produces uniform power across spectrum and normalized peak.
+
+    Physical Invariants:
+    - Signal length equals duration * sample rate.
+    - Peak amplitude equals target 0.5.
+    - Average spectral power in low (1-5 kHz) and high (15-19 kHz) bands matches within 2 dB.
+    """
     fs = 44100
     duration_sec = 2.0
     audio = generate_white_noise(duration_sec=duration_sec, fs=fs)
@@ -43,6 +50,13 @@ def test_white_noise_spectral_flatness_and_level():
 
 
 def test_chirp_frequency_progression():
+    """Verify exponential chirp sweeps upward monotonically in frequency.
+
+    Physical Invariants:
+    - Signal length matches duration * sample rate.
+    - Peak amplitude is bounded below ceiling (0.5).
+    - Late 100ms zero-crossing rate exceeds early 100ms by at least 10x ratio.
+    """
     fs = 44100
     duration_sec = 1.0
     audio = generate_chirp(duration_sec=duration_sec, fs=fs, f_start=50.0, f_end=20000.0)
@@ -56,6 +70,13 @@ def test_chirp_frequency_progression():
 
 
 def test_drum_loop_rhythm_and_frequency_split():
+    """Verify synthetic drum loop splits kick and hat into distinct frequency bands.
+
+    Physical Invariants:
+    - Kick drum segment (first 100ms) has >= 70% spectral energy below 200 Hz.
+    - Hi-hat segment has >= 50% spectral energy above 5 kHz.
+    - Overall peak amplitude matches 0.7 limit.
+    """
     fs = 44100
     bpm = 120.0
     duration_sec = 2.0
@@ -76,6 +97,12 @@ def test_drum_loop_rhythm_and_frequency_split():
 
 
 def test_apply_lossy_cutoff_brickwall_attenuation():
+    """Verify lossy cutoff filter simulates codec steep attenuation and preserves bypass.
+
+    Physical Invariants:
+    - Cutoff at Nyquist (22050 Hz) bypasses filtering unchanged (exact equality).
+    - Cutoff at 16 kHz provides >= 40 dB attenuation between passband (5-14 kHz) and stopband (18-21 kHz).
+    """
     fs = 44100
     noise = generate_white_noise(duration_sec=2.0, fs=fs)
 
