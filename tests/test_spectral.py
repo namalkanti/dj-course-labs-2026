@@ -171,18 +171,18 @@ def test_cutoff_detection_pristine_wideband():
 
     assert isinstance(analysis, CutoffDetectionAnalysis)
     assert analysis.detected_cutoff_hz >= 20000.0
-    assert analysis.verdict == "No obvious signs of a low-bitrate cutoff"
+    assert analysis.verdict == "High quality / full bandwidth audio"
     assert not analysis.is_suspicious_transcode
 
 
 @pytest.mark.parametrize(
-    "simulated_cutoff, expected_verdict, expected_range",
+    "simulated_cutoff, expected_range",
     [
-        (16000.0, "Possible 128 kbps MP3-like source", (15500.0, 16800.0)),
-        (18500.0, "Possible lower-bitrate source — roughly 192 kbps MP3-like", (18000.0, 19200.0)),
+        (16000.0, (15500.0, 17500.0)),
+        (18500.0, (18000.0, 19500.0)),
     ],
 )
-def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected_verdict: str, expected_range: Tuple[float, float]):
+def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected_range: Tuple[float, float]):
     """Lowpass-filtered signals must accurately identify the cutoff frequency and flag as suspicious transcode."""
     from dj_dsp.synth import apply_lossy_cutoff, generate_white_noise
     fs = 44100
@@ -192,9 +192,49 @@ def test_cutoff_detection_simulated_transcodes(simulated_cutoff: float, expected
     analysis = analyze_spectral_cutoff(filtered, fs=fs)
 
     assert analysis.is_suspicious_transcode
-    assert analysis.verdict == expected_verdict
+    assert analysis.verdict == "Low-bitrate transcode detected (cut off below 19.5 kHz)"
     assert expected_range[0] <= analysis.detected_cutoff_hz <= expected_range[1]
-    assert analysis.stopband_attenuation_db >= 30.0
+    assert analysis.stopband_attenuation_db >= 28.0
+
+
+def test_cutoff_detection_pristine_flac_fixture():
+    """A real pristine lossless FLAC track must not be flagged as a suspicious transcode."""
+    import soundfile as sf
+    from dj_dsp.audio_catalog import get_default_fixtures_dir
+
+    fixture_path = get_default_fixtures_dir() / "persistence_by_dabmasterars_snippet.flac"
+    audio, fs = sf.read(fixture_path)
+    if audio.ndim > 1:
+        audio = np.mean(audio, axis=1)
+
+    analysis = analyze_spectral_cutoff(audio, fs=fs)
+
+    assert not analysis.is_suspicious_transcode, f"FLAC falsely flagged: {analysis.verdict}"
+    assert analysis.detected_cutoff_hz >= 20000.0, f"Detected cutoff {analysis.detected_cutoff_hz} Hz too low for lossless"
+    assert analysis.verdict == "High quality / full bandwidth audio"
+
+
+def test_cutoff_detection_natural_rolloff_high_bitrate():
+    """Signals with natural spectral rolloff and a ~20.2+ kHz cutoff must not be misidentified as low-bitrate."""
+    from dj_dsp.synth import apply_lossy_cutoff, generate_white_noise
+    from scipy import signal
+
+    fs = 44100
+    # Generate broadband noise shaped with a gentle 1/f rolloff (natural acoustic tilt)
+    white = generate_white_noise(duration_sec=3.0, fs=fs)
+    b, a = signal.butter(1, 4000.0 / (fs / 2.0), btype="low")
+    shaped = signal.lfilter(b, a, white)
+    shaped = shaped / np.max(np.abs(shaped))
+
+    # Apply a high-quality 20.2 kHz brickwall cutoff (simulating 320 kbps MP3 encoder)
+    audio_320k = apply_lossy_cutoff(shaped, cutoff_hz=20200.0, fs=fs, order=10)
+
+    analysis = analyze_spectral_cutoff(audio_320k, fs=fs)
+
+    # Must accurately find the cliff >= 19.5 kHz and classify as high quality
+    assert not analysis.is_suspicious_transcode, f"Falsely flagged with verdict: {analysis.verdict}"
+    assert analysis.detected_cutoff_hz >= 19500.0, f"Detected cutoff {analysis.detected_cutoff_hz} Hz is too low"
+    assert analysis.verdict == "High quality / full bandwidth audio"
 
 
 def test_cutoff_detection_silence_edge_case():

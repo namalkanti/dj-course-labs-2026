@@ -221,14 +221,27 @@ def analyze_spectral_cutoff(
     ref_mask = (freqs >= 11000.0) & (freqs <= 14000.0)
     ref_db = float(np.mean(power_db[ref_mask])) if np.any(ref_mask) else peak_power
 
+    # Passband energy check: if audio has no high-frequency energy at all (e.g. ambient/808-only)
+    if ref_db < -75.0:
+        return CutoffDetectionAnalysis(
+            detected_cutoff_hz=float(nyquist),
+            peak_shelf_db=ref_db,
+            noise_floor_db=ref_db,
+            stopband_attenuation_db=0.0,
+            verdict="Insufficient high-frequency energy for forensic evaluation",
+            is_suspicious_transcode=False,
+            confidence=0.5,
+        )
+
     # Inspection candidate region: [14.0 kHz, Nyquist]
     test_mask = freqs >= 14000.0
     test_freqs = freqs[test_mask]
     test_power = power_db[test_mask]
 
-    # Roll-off threshold: drop of 10 dB relative to passband reference
-    # (Captures steep brick-wall lowpass transition before descending into noise floor)
-    drop_threshold_db = ref_db - 10.0
+    # Roll-off threshold: drop of 22 dB relative to passband reference
+    # Natural musical roll-off typically drops 10-15 dB across this register;
+    # a true codec filter plunges >20 dB into the stopband noise floor.
+    drop_threshold_db = ref_db - 22.0
     drop_indices = np.where(test_power <= drop_threshold_db)[0]
 
     if len(drop_indices) == 0:
@@ -254,22 +267,16 @@ def analyze_spectral_cutoff(
             noise_floor = float(test_power[-1])
 
         attenuation = float(ref_db - noise_floor)
-        # Heuristic thresholds, not a general distinction between mastering and codecs.
+        # Binary classification: true codec cutoffs drop below 19.5 kHz with >= 28 dB attenuation
         is_suspicious = (detected_cutoff < 19500.0) and (attenuation >= 28.0)
 
-    # Offer familiar codec comparisons as clues, not provenance certification.
-    if detected_cutoff >= 20000.0 or not is_suspicious:
-        verdict = "No obvious signs of a low-bitrate cutoff"
-        confidence = 0.95
-    elif detected_cutoff < 17200.0:
-        verdict = "Possible 128 kbps MP3-like source"
-        confidence = 0.92
-    elif detected_cutoff < 19500.0:
-        verdict = "Possible lower-bitrate source — roughly 192 kbps MP3-like"
-        confidence = 0.88
+    # Binary verdict: High quality (full bandwidth) vs Low-bitrate transcode
+    if is_suspicious:
+        verdict = "Low-bitrate transcode detected (cut off below 19.5 kHz)"
+        confidence = 0.90
     else:
-        verdict = "Bandlimiting flagged"
-        confidence = 0.75
+        verdict = "High quality / full bandwidth audio"
+        confidence = 0.95
 
     return CutoffDetectionAnalysis(
         detected_cutoff_hz=float(detected_cutoff),

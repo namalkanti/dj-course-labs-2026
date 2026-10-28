@@ -590,11 +590,13 @@ def exercise_3_upload_inspector(
             """
         )
 
+        uploaded_name = audio_uploader.name(0) or "Uploaded Audio"
+
         _player_orig = mo.audio(analyzed_orig, rate=upload_fs)
         _player_filt = mo.audio(analyzed_filt, rate=upload_fs)
 
         _players_row = mo.hstack([
-            mo.vstack([mo.md(f"**As Uploaded (`{audio_uploader.name}`)**"), _player_orig], gap=0.4),
+            mo.vstack([mo.md(f"**As Uploaded (`{uploaded_name}`)**"), _player_orig], gap=0.4),
             mo.vstack([mo.md(f"**With Simulated Cutoff ({upload_cutoff.value / 1000.0:.1f} kHz)**" if _is_filtered else "**Cutoff (None)**"), _player_filt], gap=0.4),
         ], justify="space-around", gap=2.0)
 
@@ -608,7 +610,7 @@ def exercise_3_upload_inspector(
         )
 
         file_info = mo.md(
-            f"**File:** `{audio_uploader.name}` &nbsp;|&nbsp; "
+            f"**File:** `{uploaded_name}` &nbsp;|&nbsp; "
             f"**Sample Rate:** `{upload_fs} Hz` &nbsp;|&nbsp; "
             f"**Total Track Duration:** `{total_duration_sec:.1f} s` &nbsp;|&nbsp; "
             f"**Active Slice:** `{start_sec:.1f}s – {start_sec + duration_sec:.1f}s`"
