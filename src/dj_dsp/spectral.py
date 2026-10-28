@@ -5,9 +5,10 @@ and return typed, frozen view dataclasses defined in dj_dsp.spectral_data:
 - compute_welch_spectrum -> SpectrumView
 - compute_stft_spectrogram -> SpectrogramView
 - compute_three_band_waveform -> ThreeBandWaveformView
+- analyze_spectral_cutoff -> CutoffDetectionAnalysis
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 import scipy.signal as signal
 
@@ -18,6 +19,16 @@ from dj_dsp.spectral_data import (
     ThreeBandWaveformView,
 )
 
+SILENCE_THRESHOLD_DBFS = -85.0
+INSUFFICIENT_HF_ENERGY_DBFS = -75.0
+PASSBAND_REF_F_MIN_HZ = 11000.0
+PASSBAND_REF_F_MAX_HZ = 14000.0
+TEST_BAND_START_HZ = 14000.0
+ROLLOFF_DROP_THRESHOLD_DB = 22.0
+STOPBAND_TRANSITION_OFFSET_HZ = 1200.0
+TRANSCODE_CUTOFF_CEILING_HZ = 19500.0
+TRANSCODE_MIN_ATTENUATION_DB = 28.0
+
 
 def compute_welch_spectrum(
     audio: np.ndarray,
@@ -25,21 +36,7 @@ def compute_welch_spectrum(
     window_length: int = 4096,
     overlap_length: Optional[int] = None,
 ) -> SpectrumView:
-    """Compute Welch's Power Spectral Density (PSD) estimate across discrete frequencies.
-
-    Partitions the audio into Hann-windowed segments with overlap, computes their
-    periodograms, and averages them to minimize spectral variance.
-
-    Args:
-        audio: 1D NumPy array of audio samples (float32 or float64).
-        fs: Sampling rate in Hz (defaults to 44100).
-        window_length: FFT and window length L in samples (defaults to 4096).
-        overlap_length: Number of overlapping samples between successive windows.
-                        Defaults to window_length // 2 (50% overlap).
-
-    Returns:
-        SpectrumView with frequencies and power_db in dBFS.
-    """
+    """Compute Welch's Power Spectral Density (PSD) estimate across discrete frequencies."""
     if overlap_length is None:
         overlap_length = window_length // 2
 
@@ -70,18 +67,7 @@ def compute_stft_spectrogram(
     overlap_length: Optional[int] = None,
     dynamic_range_db: float = 80.0,
 ) -> SpectrogramView:
-    """Compute 2D Short-Time Fourier Transform (STFT) power spectrogram.
-
-    Args:
-        audio: 1D NumPy array of audio samples.
-        fs: Sampling rate in Hz (defaults to 44100).
-        window_length: STFT window length L in samples (defaults to 2048).
-        overlap_length: Number of overlapping samples (defaults to L * 3 // 4 = 1536).
-        dynamic_range_db: Decibel display floor depth below signal peak (defaults to 80 dB).
-
-    Returns:
-        SpectrogramView with times, frequencies, and power_db clamped to [vmax - dynamic_range_db, vmax].
-    """
+    """Compute 2D Short-Time Fourier Transform (STFT) power spectrogram."""
     if overlap_length is None:
         overlap_length = (window_length * 3) // 4
 
@@ -99,7 +85,6 @@ def compute_stft_spectrogram(
     raw_power_db = 20.0 * np.log10(np.abs(zxx) + 1e-9)
     vmax = float(np.max(raw_power_db))
     vmin = vmax - dynamic_range_db
-
     power_db = np.clip(raw_power_db, vmin, vmax)
 
     return SpectrogramView(
@@ -117,57 +102,13 @@ def compute_three_band_waveform(
     low_cutoff: float = 250.0,
     high_cutoff: float = 2500.0,
 ) -> ThreeBandWaveformView:
-    """Compute Pioneer Rekordbox 3-band amplitude envelopes (CDJ-3000 style).
-
-    Splits audio using 2nd-order Butterworth crossover filterbanks into:
-    - Low Band: f < low_cutoff (Bass, < 250 Hz)
-    - Mid Band: low_cutoff <= f < high_cutoff (Midrange, 250 Hz - 2.5 kHz)
-    - High Band: f >= high_cutoff (Treble, >= 2.5 kHz)
-
-    Then performs block-wise RMS pooling over windows of hop_length samples.
-    (Note: Standard Butterworth is optimal for envelope extraction; Linkwitz-Riley
-    is only required when summing filtered bands back into audible audio, as in the EQ module).
-
-    Args:
-        audio: 1D NumPy array of audio samples.
-        fs: Sampling rate in Hz.
-        hop_length: Window step in samples between successive display frames.
-        low_cutoff: Crossover frequency between Bass and Mids in Hz (defaults to 250 Hz).
-        high_cutoff: Crossover frequency between Mids and Treble in Hz (defaults to 2500 Hz).
-
-    Returns:
-        ThreeBandWaveformView with times, low, mid, and high envelopes.
-    """
-    nyquist = fs / 2.0
-    safe_low = min(low_cutoff, nyquist * 0.95)
-    safe_high = min(high_cutoff, nyquist * 0.98)
-
-    sos_low = signal.butter(2, safe_low / nyquist, btype="lowpass", output="sos")
-    sos_mid = signal.butter(
-        2, [safe_low / nyquist, safe_high / nyquist], btype="bandpass", output="sos"
+    """Compute Pioneer Rekordbox 3-band amplitude envelopes (CDJ-3000 style)."""
+    sig_low, sig_mid, sig_high = filter_three_bands(audio, fs, low_cutoff, high_cutoff)
+    rms_low, rms_mid, rms_high = compute_framed_rms_bands(
+        [sig_low, sig_mid, sig_high], hop_length=hop_length
     )
-    sos_high = signal.butter(2, safe_high / nyquist, btype="highpass", output="sos")
 
-    sig_low = signal.sosfilt(sos_low, audio)
-    sig_mid = signal.sosfilt(sos_mid, audio)
-    sig_high = signal.sosfilt(sos_high, audio)
-
-    num_frames = int(np.ceil(len(audio) / hop_length))
-    pad_len = num_frames * hop_length - len(audio)
-
-    if pad_len > 0:
-        sig_low = np.pad(sig_low, (0, pad_len))
-        sig_mid = np.pad(sig_mid, (0, pad_len))
-        sig_high = np.pad(sig_high, (0, pad_len))
-
-    low_frames = sig_low.reshape(num_frames, hop_length)
-    mid_frames = sig_mid.reshape(num_frames, hop_length)
-    high_frames = sig_high.reshape(num_frames, hop_length)
-
-    rms_low = np.sqrt(np.mean(low_frames**2, axis=1))
-    rms_mid = np.sqrt(np.mean(mid_frames**2, axis=1))
-    rms_high = np.sqrt(np.mean(high_frames**2, axis=1))
-
+    num_frames = len(rms_low)
     times = (np.arange(num_frames) * hop_length + (hop_length / 2.0)) / fs
 
     return ThreeBandWaveformView(
@@ -183,100 +124,29 @@ def analyze_spectral_cutoff(
     fs: int = 44100,
     window_length: int = 2048,
 ) -> CutoffDetectionAnalysis:
-    """Inspect high-frequency roll-off using a bandwidth/attenuation heuristic.
-
-    Examines the top register (10 kHz to Nyquist) using Welch PSD. Low-pass
-    patterns can be consistent with lossy encoding, mastering, or other filtering.
-    Neither a cutoff nor its absence establishes bitrate or encoding history.
-    The legacy confidence field contains fixed, uncalibrated heuristic scores,
-    not probabilities of authenticity.
-
-    Args:
-        audio: 1D monophonic float array of audio samples.
-        fs: Sampling rate in Hz (defaults to 44100).
-        window_length: FFT window length in samples (defaults to 2048).
-
-    Returns:
-        CutoffDetectionAnalysis with detected cutoff frequency, stopband metrics, and verdict.
-    """
+    """Inspect high-frequency roll-off using a bandwidth/attenuation heuristic."""
     nyquist = fs / 2.0
     view = compute_welch_spectrum(audio, fs=fs, window_length=window_length)
-    freqs = view.frequencies
-    power_db = view.power_db
+    freqs, power_db = view.frequencies, view.power_db
 
-    # Edge case: Pure silence or DC offset
     peak_power = float(np.max(power_db))
-    if peak_power < -85.0:
-        return CutoffDetectionAnalysis(
-            detected_cutoff_hz=0.0,
-            peak_shelf_db=peak_power,
-            noise_floor_db=peak_power,
-            stopband_attenuation_db=0.0,
-            verdict="Silent / Insufficient Audio Energy",
-            is_suspicious_transcode=False,
-            confidence=0.0,
-        )
+    if peak_power < SILENCE_THRESHOLD_DBFS:
+        return make_silent_cutoff_analysis(peak_power)
 
-    # Reference band in the upper-mid passband: [11.0 kHz, 14.0 kHz]
-    ref_mask = (freqs >= 11000.0) & (freqs <= 14000.0)
+    ref_mask = (freqs >= PASSBAND_REF_F_MIN_HZ) & (freqs <= PASSBAND_REF_F_MAX_HZ)
     ref_db = float(np.mean(power_db[ref_mask])) if np.any(ref_mask) else peak_power
+    if ref_db < INSUFFICIENT_HF_ENERGY_DBFS:
+        return make_insufficient_energy_analysis(ref_db, nyquist=nyquist)
 
-    # Passband energy check: if audio has no high-frequency energy at all (e.g. ambient/808-only)
-    if ref_db < -75.0:
-        return CutoffDetectionAnalysis(
-            detected_cutoff_hz=float(nyquist),
-            peak_shelf_db=ref_db,
-            noise_floor_db=ref_db,
-            stopband_attenuation_db=0.0,
-            verdict="Insufficient high-frequency energy for forensic evaluation",
-            is_suspicious_transcode=False,
-            confidence=0.5,
-        )
+    test_mask = freqs >= TEST_BAND_START_HZ
+    test_freqs, test_power = freqs[test_mask], power_db[test_mask]
 
-    # Inspection candidate region: [14.0 kHz, Nyquist]
-    test_mask = freqs >= 14000.0
-    test_freqs = freqs[test_mask]
-    test_power = power_db[test_mask]
+    drop_threshold_db = ref_db - ROLLOFF_DROP_THRESHOLD_DB
+    detected_cutoff = estimate_cutoff_frequency(test_freqs, test_power, drop_threshold_db, nyquist)
+    noise_floor = measure_stopband_noise_floor(test_freqs, test_power, detected_cutoff)
+    attenuation = float(ref_db - noise_floor)
 
-    # Roll-off threshold: drop of 22 dB relative to passband reference
-    # Natural musical roll-off typically drops 10-15 dB across this register;
-    # a true codec filter plunges >20 dB into the stopband noise floor.
-    drop_threshold_db = ref_db - 22.0
-    drop_indices = np.where(test_power <= drop_threshold_db)[0]
-
-    if len(drop_indices) == 0:
-        detected_cutoff = float(nyquist)
-        noise_floor = float(np.min(test_power))
-        attenuation = ref_db - noise_floor
-        is_suspicious = False
-    else:
-        first_drop_idx = int(drop_indices[0])
-        if first_drop_idx > 0:
-            f0, f1 = test_freqs[first_drop_idx - 1], test_freqs[first_drop_idx]
-            p0, p1 = test_power[first_drop_idx - 1], test_power[first_drop_idx]
-            frac = (drop_threshold_db - p0) / (p1 - p0) if abs(p1 - p0) > 1e-4 else 0.5
-            detected_cutoff = float(f0 + frac * (f1 - f0))
-        else:
-            detected_cutoff = float(test_freqs[0])
-
-        # Measure stopband attenuation in bins >= detected_cutoff + 1200 Hz
-        stop_mask = test_freqs >= (detected_cutoff + 1200.0)
-        if np.any(stop_mask):
-            noise_floor = float(np.mean(test_power[stop_mask]))
-        else:
-            noise_floor = float(test_power[-1])
-
-        attenuation = float(ref_db - noise_floor)
-        # Binary classification: true codec cutoffs drop below 19.5 kHz with >= 28 dB attenuation
-        is_suspicious = (detected_cutoff < 19500.0) and (attenuation >= 28.0)
-
-    # Binary verdict: High quality (full bandwidth) vs Low-bitrate transcode
-    if is_suspicious:
-        verdict = "Low-bitrate transcode detected (cut off below 19.5 kHz)"
-        confidence = 0.90
-    else:
-        verdict = "High quality / full bandwidth audio"
-        confidence = 0.95
+    is_suspicious, verdict, confidence = classify_transcode_verdict(detected_cutoff, attenuation)
 
     return CutoffDetectionAnalysis(
         detected_cutoff_hz=float(detected_cutoff),
@@ -286,4 +156,114 @@ def analyze_spectral_cutoff(
         verdict=verdict,
         is_suspicious_transcode=is_suspicious,
         confidence=float(confidence),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
+
+
+def filter_three_bands(
+    audio: np.ndarray, fs: int, low_cutoff: float, high_cutoff: float
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Split audio into Low, Mid, High bands using 2nd-order Butterworth IIR filters."""
+    nyquist = fs / 2.0
+    safe_low = min(low_cutoff, nyquist * 0.95)
+    safe_high = min(high_cutoff, nyquist * 0.98)
+
+    sos_low = signal.butter(2, safe_low / nyquist, btype="lowpass", output="sos")
+    sos_mid = signal.butter(
+        2, [safe_low / nyquist, safe_high / nyquist], btype="bandpass", output="sos"
+    )
+    sos_high = signal.butter(2, safe_high / nyquist, btype="highpass", output="sos")
+
+    return (
+        signal.sosfilt(sos_low, audio),
+        signal.sosfilt(sos_mid, audio),
+        signal.sosfilt(sos_high, audio),
+    )
+
+
+def compute_framed_rms_bands(
+    signals: list[np.ndarray], hop_length: int
+) -> list[np.ndarray]:
+    """Pad signals to full hops and compute frame-wise RMS power."""
+    raw_len = len(signals[0])
+    num_frames = int(np.ceil(raw_len / hop_length))
+    pad_len = num_frames * hop_length - raw_len
+
+    rms_results = []
+    for sig in signals:
+        padded = np.pad(sig, (0, pad_len)) if pad_len > 0 else sig
+        frames = padded.reshape(num_frames, hop_length)
+        rms = np.sqrt(np.mean(frames**2, axis=1))
+        rms_results.append(rms)
+
+    return rms_results
+
+
+def estimate_cutoff_frequency(
+    freqs: np.ndarray, power: np.ndarray, drop_threshold_db: float, nyquist: float
+) -> float:
+    """Find the first frequency bin dropping below threshold with linear interpolation."""
+    drop_indices = np.where(power <= drop_threshold_db)[0]
+    if len(drop_indices) == 0:
+        return float(nyquist)
+
+    idx = int(drop_indices[0])
+    if idx == 0:
+        return float(freqs[0])
+
+    f0, f1 = freqs[idx - 1], freqs[idx]
+    p0, p1 = power[idx - 1], power[idx]
+    frac = (drop_threshold_db - p0) / (p1 - p0) if abs(p1 - p0) > 1e-4 else 0.5
+    return float(f0 + frac * (f1 - f0))
+
+
+def measure_stopband_noise_floor(
+    freqs: np.ndarray, power: np.ndarray, detected_cutoff_hz: float
+) -> float:
+    """Average power levels in stopband bins located beyond cutoff + offset."""
+    stop_mask = freqs >= (detected_cutoff_hz + STOPBAND_TRANSITION_OFFSET_HZ)
+    if np.any(stop_mask):
+        return float(np.mean(power[stop_mask]))
+    return float(power[-1]) if len(power) > 0 else 0.0
+
+
+def classify_transcode_verdict(
+    detected_cutoff_hz: float, attenuation_db: float
+) -> Tuple[bool, str, float]:
+    """Classify audio as full bandwidth vs suspicious lossy transcode."""
+    is_suspicious = (detected_cutoff_hz < TRANSCODE_CUTOFF_CEILING_HZ) and (
+        attenuation_db >= TRANSCODE_MIN_ATTENUATION_DB
+    )
+    if is_suspicious:
+        return True, "Low-bitrate transcode detected (cut off below 19.5 kHz)", 0.90
+    return False, "High quality / full bandwidth audio", 0.95
+
+
+def make_silent_cutoff_analysis(peak_power: float) -> CutoffDetectionAnalysis:
+    """Construct an analysis result for near-silent audio inputs."""
+    return CutoffDetectionAnalysis(
+        detected_cutoff_hz=0.0,
+        peak_shelf_db=peak_power,
+        noise_floor_db=peak_power,
+        stopband_attenuation_db=0.0,
+        verdict="Silent / Insufficient Audio Energy",
+        is_suspicious_transcode=False,
+        confidence=0.0,
+    )
+
+
+def make_insufficient_energy_analysis(ref_db: float, nyquist: float) -> CutoffDetectionAnalysis:
+    """Construct an analysis result for audio lacking high-frequency energy."""
+    return CutoffDetectionAnalysis(
+        detected_cutoff_hz=float(nyquist),
+        peak_shelf_db=ref_db,
+        noise_floor_db=ref_db,
+        stopband_attenuation_db=0.0,
+        verdict="Insufficient high-frequency energy for forensic evaluation",
+        is_suspicious_transcode=False,
+        confidence=0.5,
     )

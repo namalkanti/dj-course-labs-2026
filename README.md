@@ -65,3 +65,20 @@ Or run as a read-only app:
 ```bash
 uv run marimo run quality/quality_lab.py
 ```
+
+## CLI Tools
+
+A Click-powered CLI (`dj-dsp`) is installed for terminal audio quality audits and spectral plotting:
+
+```bash
+# Check track audio quality & transcode detection
+uv run dj-dsp check-quality path/to/track.flac
+
+# JSON output for pipelines
+uv run dj-dsp check-quality -j path/to/track.mp3
+
+# Plot high-frequency shelf (10–22 kHz) with 16–20 kHz hearing limit highlight
+uv run dj-dsp plot-shelf path/to/track.mp3
+uv run dj-dsp plot-shelf -o shelf.png path/to/track.mp3
+```
+

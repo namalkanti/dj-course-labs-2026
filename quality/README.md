@@ -22,3 +22,26 @@ Or view as a standalone read-only app:
 ```bash
 uv run marimo run quality/quality_lab.py
 ```
+
+## CLI Quality Inspection & Shelf Plotting
+
+The `dj-dsp` CLI provides standalone terminal-based transcode detection and high-frequency shelf visualization without launching Marimo:
+
+```bash
+# Formatted quality audit with pass/fail transcode exit codes (0 = pass, 1 = transcode)
+uv run dj-dsp check-quality audio_catalog/persistence_by_dabmasterars_snippet.flac
+
+# JSON output for automated scripting or batch pipeline inspection
+uv run dj-dsp check-quality -j audio_catalog/persistence_by_dabmasterars_snippet.flac
+
+# Analyze only the first 15 seconds of a track
+uv run dj-dsp check-quality -d 15.0 path/to/track.mp3
+
+# Plot high-frequency shelf (10–22 kHz) with 16–20 kHz hearing limit highlight
+# Opens an interactive GUI window, or falls back to system viewer
+uv run dj-dsp plot-shelf path/to/track.mp3
+
+# Save shelf plot directly to image without GUI interaction
+uv run dj-dsp plot-shelf -o shelf.png path/to/track.mp3
+```
+

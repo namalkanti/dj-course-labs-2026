@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 
+DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB = 80.0
+RGB_NORMALIZATION_EPSILON = 1e-9
+
 
 @dataclass(frozen=True)
 class SpectrumView:
@@ -22,9 +25,7 @@ class SpectrumView:
 
     Fields:
         frequencies: 1D array of frequency bin center values in Hz, spanning [0.0, fs / 2].
-                     Length is typically (window_length // 2 + 1).
-        power_db: 1D array of power levels in decibels relative to full scale (dBFS),
-                  computed as 10 * log10(psd + eps). Same shape as frequencies.
+        power_db: 1D array of power levels in dBFS. Same shape as frequencies.
     """
 
     frequencies: np.ndarray
@@ -32,7 +33,7 @@ class SpectrumView:
 
     @property
     def peak_db(self) -> float:
-        """Observed maximum power level across all frequency bins in dBFS (float(np.max(power_db)))."""
+        """Observed maximum power level across all frequency bins in dBFS."""
         return float(np.max(self.power_db))
 
     def crop(
@@ -41,64 +42,34 @@ class SpectrumView:
         f_max: Optional[float] = None,
         normalize_peak: bool = False,
     ) -> "SpectrumView":
-        """Return a sub-band SpectrumView cropped to [f_min, f_max].
-
-        Args:
-            f_min: Lower frequency bound in Hz (defaults to 0.0).
-            f_max: Upper frequency bound in Hz (defaults to Nyquist).
-            normalize_peak: If True, offsets decibel levels so the sub-band peak is 0.0 dBFS.
-
-        Returns:
-            A new SpectrumView containing only bins within [f_min, f_max].
-        """
-        if f_max is None:
-            f_max = float(self.frequencies[-1])
-
-        mask = (self.frequencies >= f_min) & (self.frequencies <= f_max)
-        sub_frequencies = self.frequencies[mask]
-        sub_power_db = self.power_db[mask].copy()
-
-        if normalize_peak and len(sub_power_db) > 0:
-            sub_power_db -= float(np.max(sub_power_db))
-
-        return SpectrumView(
-            frequencies=sub_frequencies,
-            power_db=sub_power_db,
-        )
+        """Return a sub-band SpectrumView cropped to [f_min, f_max]."""
+        return crop_spectrum_view(self, f_min=f_min, f_max=f_max, normalize_peak=normalize_peak)
 
 
 @dataclass(frozen=True)
 class SpectrogramView:
     """2D Time-Frequency lens: Short-Time Fourier Transform (STFT) power spectrogram.
 
-    All decibel values are in dBFS (decibels relative to full scale, where 0 dBFS is
-    digital clipping). The display window clamps values to an 80 dB span below peak
-    (e.g. from -80 dBFS up to 0 dBFS) to prevent float quantization noise from
-    diluting visual contrast.
-
     Fields:
-        times: 1D array of segment center times in seconds, spanning [0, duration_sec].
-               Length matches the number of time frames N_times.
-        frequencies: 1D array of frequency bin center values in Hz, spanning [0.0, fs / 2].
-                     Length is (window_length // 2 + 1).
+        times: 1D array of segment center times in seconds.
+        frequencies: 1D array of frequency bin center values in Hz.
         power_db: 2D array of power in dBFS with shape (N_frequencies, N_times).
-                  Clamped to [vmin, vmax] (e.g. [-80 dBFS, 0 dBFS]).
-        dynamic_range_db: Visual display dynamic range window width in decibels (defaults to 80.0 dB).
+        dynamic_range_db: Visual display dynamic range window width in decibels.
     """
 
     times: np.ndarray
     frequencies: np.ndarray
     power_db: np.ndarray
-    dynamic_range_db: float = 80.0
+    dynamic_range_db: float = DEFAULT_SPECTROGRAM_DYNAMIC_RANGE_DB
 
     @property
     def vmax(self) -> float:
-        """Observed maximum power level across the time-frequency matrix in dBFS (typically <= 0 dBFS)."""
+        """Observed maximum power level across the time-frequency matrix in dBFS."""
         return float(np.max(self.power_db))
 
     @property
     def vmin(self) -> float:
-        """Display floor in dBFS derived from vmax and dynamic_range_db (vmax - dynamic_range_db, e.g. -80 dBFS)."""
+        """Display floor in dBFS derived from vmax and dynamic_range_db."""
         return self.vmax - self.dynamic_range_db
 
 
@@ -106,16 +77,11 @@ class SpectrogramView:
 class ThreeBandWaveformView:
     """DJ 3-band performance lens: Pioneer CDJ-3000 / Rekordbox 6+ stacked waveform.
 
-    Each frequency band is modeled as an independent amplitude envelope over time:
-    - low: Bass register (< 250 Hz, rendered as Cyan in Rekordbox).
-    - mid: Midrange register (250 Hz - 2.5 kHz, rendered as Orange/Amber).
-    - high: Treble register (>= 2.5 kHz, rendered as Blue).
-
     Fields:
         times: 1D array of frame center times in seconds. Length N_frames.
-        low: 1D array of RMS/peak amplitude for the Bass band (>= 0.0).
-        mid: 1D array of RMS/peak amplitude for the Mid band (>= 0.0).
-        high: 1D array of RMS/peak amplitude for the Treble band (>= 0.0).
+        low: 1D array of RMS amplitude for the Bass band (< 250 Hz).
+        mid: 1D array of RMS amplitude for the Mid band (250 Hz - 2.5 kHz).
+        high: 1D array of RMS amplitude for the Treble band (>= 2.5 kHz).
     """
 
     times: np.ndarray
@@ -127,32 +93,18 @@ class ThreeBandWaveformView:
         self, envelope_upper: np.ndarray, envelope_lower: np.ndarray
     ) -> "RGBBlendedWaveformView":
         """Convert 3-band envelopes into a classic CDJ-2000 blended RGB waveform lens."""
-        total_energy = self.low + self.mid + self.high + 1e-9
-        r = np.clip(self.low / total_energy, 0.0, 1.0)
-        g = np.clip(self.mid / total_energy, 0.0, 1.0)
-        b = np.clip(self.high / total_energy, 0.0, 1.0)
-        rgb_colors = np.column_stack([r, g, b])
-
-        return RGBBlendedWaveformView(
-            times=self.times,
-            envelope_upper=envelope_upper,
-            envelope_lower=envelope_lower,
-            rgb_colors=rgb_colors,
-        )
+        return blend_envelopes_to_rgb(self, envelope_upper, envelope_lower)
 
 
 @dataclass(frozen=True)
 class RGBBlendedWaveformView:
     """DJ blended-color performance lens: Pioneer CDJ-2000 Nexus waveform.
 
-    Renders a single overall waveform envelope whose fill color dynamically blends
-    (R, G, B) based on relative low/mid/high energy balance.
-
     Fields:
         times: 1D array of frame center times in seconds. Length N_frames.
-        envelope_upper: 1D array of overall full-signal positive peak envelope (>= 0.0).
-        envelope_lower: 1D array of overall full-signal negative peak envelope (<= 0.0).
-        rgb_colors: 2D array of shape (N_frames, 3) with normalized (R, G, B) float values in [0.0, 1.0].
+        envelope_upper: 1D array of overall positive peak envelope (>= 0.0).
+        envelope_lower: 1D array of overall negative peak envelope (<= 0.0).
+        rgb_colors: 2D array of shape (N_frames, 3) with normalized (R, G, B) values in [0.0, 1.0].
     """
 
     times: np.ndarray
@@ -171,10 +123,8 @@ class CutoffDetectionAnalysis:
         noise_floor_db: Average power level in the post-cutoff stopband.
         stopband_attenuation_db: Difference in dB between shelf reference and stopband noise floor.
         verdict: Plain-English description of the heuristic's bandlimiting flag.
-        is_suspicious_transcode: Legacy name for the bandwidth/attenuation flag;
-                                does not establish that transcoding occurred.
-        confidence: Legacy fixed heuristic score in [0.0, 1.0], uncalibrated and
-                    not a probability of provenance or perceptual quality.
+        is_suspicious_transcode: Bandwidth/attenuation flag.
+        confidence: Legacy fixed heuristic score in [0.0, 1.0].
     """
 
     detected_cutoff_hz: float
@@ -185,3 +135,46 @@ class CutoffDetectionAnalysis:
     is_suspicious_transcode: bool
     confidence: float
 
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
+
+
+def crop_spectrum_view(
+    view: SpectrumView,
+    f_min: float = 0.0,
+    f_max: Optional[float] = None,
+    normalize_peak: bool = False,
+) -> SpectrumView:
+    """Filter spectrum frequency bins to [f_min, f_max] and optionally normalize peak to 0 dBFS."""
+    upper_bound = float(view.frequencies[-1]) if f_max is None else f_max
+    mask = (view.frequencies >= f_min) & (view.frequencies <= upper_bound)
+
+    sub_freqs = view.frequencies[mask]
+    sub_power = view.power_db[mask].copy()
+
+    if normalize_peak and len(sub_power) > 0:
+        sub_power -= float(np.max(sub_power))
+
+    return SpectrumView(frequencies=sub_freqs, power_db=sub_power)
+
+
+def blend_envelopes_to_rgb(
+    view: ThreeBandWaveformView,
+    envelope_upper: np.ndarray,
+    envelope_lower: np.ndarray,
+) -> RGBBlendedWaveformView:
+    """Compute normalized RGB ratios from Low, Mid, High envelopes for CDJ-2000 style rendering."""
+    total_energy = view.low + view.mid + view.high + RGB_NORMALIZATION_EPSILON
+    r = np.clip(view.low / total_energy, 0.0, 1.0)
+    g = np.clip(view.mid / total_energy, 0.0, 1.0)
+    b = np.clip(view.high / total_energy, 0.0, 1.0)
+    rgb_colors = np.column_stack([r, g, b])
+
+    return RGBBlendedWaveformView(
+        times=view.times,
+        envelope_upper=envelope_upper,
+        envelope_lower=envelope_lower,
+        rgb_colors=rgb_colors,
+    )

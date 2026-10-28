@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=1.13.0",
+    "click>=8.1.0",
     "google-genai>=2.30.0",
     "librosa>=1.0.0",
     "marimo>=0.25.1",
@@ -29,6 +30,9 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=8.0.0",
 ]
+
+[project.scripts]
+dj-dsp = "dj_dsp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dj_dsp"]

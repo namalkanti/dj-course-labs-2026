@@ -347,6 +347,7 @@ def make_analysis_tabs_helper(
             "High-Freq Shelf (Overlaid Inspector)": mo.vstack([
                 mo.md(
                     "_Both curves plotted together on a linear scale (10–22.05 kHz). "
+                    "The shaded purple band marks the upper human hearing limit (16–20 kHz). "
                     "Notice the sharp drop into the noise floor on the filtered audio._"
                 ),
                 img_shelf,

@@ -12,6 +12,13 @@
 
 ## Coding & DSP Principles
 - **Pure functional DSP core**: Core analysis functions in `src/dj_dsp/spectral.py` and `synth.py` must remain pure functions taking arrays/parameters and returning frozen dataclasses defined in `spectral_data.py`.
+- **Top-Down Reading Order & Two-Phase Refactoring**:
+  - Focus first on getting algorithms/actions working and verified with tests without premature abstraction.
+  - Before declaring complete, refactor each module to the newspaper layout:
+    - Hoist named constants (thresholds, frequencies, tolerances) to the top.
+    - Public functions and orchestrators (< 35–40 lines) sit directly below constants.
+    - Colocate private/decomposed helper functions at the bottom under an explicit `# --- Helper Functions ---` block.
+    - Colocate test assertions at the bottom of test files under `# --- Domain-Specific Assertion Helpers ---`.
 - **Synthetic vs. Real Audio**:
   - Never commit proprietary copyrighted tracks to Git (e.g. Amazon MP3 downloads or personal library rips).
   - Use pure mathematical synthesizers (`synth.py`) or CC0 / public-domain fixtures in `audio_catalog/`.
@@ -23,7 +30,7 @@
 ## Verification Commands
 Always run verification using `uv`:
 ```bash
-# Full unit test suite (25 tests)
+# Full unit test suite (29 tests)
 uv run pytest
 
 # Check marimo syntax and DAG parsing
