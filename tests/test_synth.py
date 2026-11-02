@@ -18,9 +18,11 @@ from dj_dsp.synth import (
     apply_lossy_cutoff,
     generate_chirp,
     generate_drum_loop,
+    generate_linear_chirp,
     generate_syncopated_breakbeat,
     generate_synthetic_beat,
     generate_tempo_drift_beat,
+    generate_transient_clicks,
     generate_waltz_beat,
     generate_white_noise,
 )
@@ -67,6 +69,51 @@ def test_chirp_frequency_progression():
     early_100ms = audio[: int(0.1 * fs)]
     late_100ms = audio[int(0.9 * fs) :]
     assert_zero_crossing_rate_increases(early_100ms, late_100ms, min_ratio=10.0)
+
+
+def test_linear_chirp_frequency_progression():
+    """Verify linear top-register chirp sweeps upward monotonically.
+
+    Physical Invariants:
+    - Signal length matches duration * sample rate.
+    - Peak amplitude bounded at 0.5.
+    - Zero-crossing rate increases from start (10 kHz) to end (20 kHz).
+    """
+    fs = 44100
+    duration_sec = 1.0
+    audio = generate_linear_chirp(
+        duration_sec=duration_sec, fs=fs, f_start=10000.0, f_end=20000.0
+    )
+
+    assert_sample_count_matches_duration(audio, duration_sec, fs)
+    assert_peak_amplitude_bounded_below(audio, 0.5)
+
+    early_100ms = audio[: int(0.1 * fs)]
+    late_100ms = audio[int(0.9 * fs) :]
+    assert_zero_crossing_rate_increases(early_100ms, late_100ms, min_ratio=1.5)
+
+
+def test_transient_clicks_timing_and_isolation():
+    """Verify transient clicks produce isolated energy spikes at specified timestamps.
+
+    Physical Invariants:
+    - Signal length matches duration * sample rate.
+    - Peak amplitude equals 0.9.
+    - Regions between clicks are quiet (near-zero amplitude).
+    """
+    fs = 44100
+    duration_sec = 2.0
+    click_times = (0.5, 1.0, 1.5)
+    audio = generate_transient_clicks(
+        duration_sec=duration_sec, click_times_sec=click_times, fs=fs
+    )
+
+    assert_sample_count_matches_duration(audio, duration_sec, fs)
+    assert_peak_amplitude_equals(audio, 0.9)
+
+    # Check quiet region between click 1 (0.5s) and click 2 (1.0s)
+    quiet_window = audio[int(0.7 * fs) : int(0.8 * fs)]
+    assert np.max(np.abs(quiet_window)) < 0.05
 
 
 def test_drum_loop_rhythm_and_frequency_split():

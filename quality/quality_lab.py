@@ -94,7 +94,8 @@ def load_dsp_modules():
     import numpy as np
     from scipy import signal
     import soundfile as sf
-    from dj_dsp.synth import apply_lossy_cutoff, encode_mp3_lame
+    from dj_dsp.lame import encode_mp3_lame
+    from dj_dsp.synth import apply_lossy_cutoff
 
     return apply_lossy_cutoff, encode_mp3_lame, io, np, plt, sf
 

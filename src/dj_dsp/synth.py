@@ -5,26 +5,13 @@ and evaluating lossy compression artifacts.
 """
 
 from typing import Tuple
-import shutil
-import subprocess
-import tempfile
 import numpy as np
 from scipy import signal
-import soundfile as sf
 
 DEFAULT_FS = 44100
 DEFAULT_HEADROOM_RATIO = 0.85
 MAX_PEAK_AMPLITUDE = 0.95
 EPSILON_SLOPE = 1e-6
-
-# Default codec cutoff frequency thresholds in Hz
-LAME_FALLBACK_CUTOFF_MAP = {
-    64: 11000.0,
-    96: 14000.0,
-    128: 16000.0,
-    192: 18500.0,
-    320: 20000.0,
-}
 
 
 def generate_white_noise(duration_sec: float = 3.0, fs: int = DEFAULT_FS) -> np.ndarray:
@@ -32,7 +19,7 @@ def generate_white_noise(duration_sec: float = 3.0, fs: int = DEFAULT_FS) -> np.
     num_samples = int(duration_sec * fs)
     rng = np.random.default_rng()
     noise = rng.normal(loc=0.0, scale=0.2, size=num_samples)
-    return normalize_peak(noise, target_peak=0.5)
+    return _normalize_peak(noise, target_peak=0.5)
 
 
 def generate_chirp(
@@ -42,7 +29,7 @@ def generate_chirp(
     f_end: float = 22050.0,
 ) -> np.ndarray:
     """Generate an exponential frequency sweep (chirp) from f_start to f_end."""
-    t = time_samples_for_frequency(duration_sec, fs)
+    t = _time_samples_for_frequency(duration_sec, fs)
     sweep = signal.chirp(t, f0=f_start, t1=duration_sec, f1=f_end, method="logarithmic")
     return (sweep * 0.5).astype(np.float32)
 
@@ -54,7 +41,7 @@ def generate_linear_chirp(
     f_end: float = 20000.0,
 ) -> np.ndarray:
     """Generate a linear frequency sweep across the top register (10 kHz to 20 kHz)."""
-    t = time_samples_for_frequency(duration_sec, fs)
+    t = _time_samples_for_frequency(duration_sec, fs)
     sweep = signal.chirp(t, f0=f_start, t1=duration_sec, f1=f_end, method="linear")
     return (sweep * 0.5).astype(np.float32)
 
@@ -83,7 +70,7 @@ def generate_transient_clicks(
         start_idx = int(click_t * fs)
         _overlay_drum_hit(signal_out, click_waveform, start_idx, amplitude=1.0)
 
-    return normalize_peak(signal_out, target_peak=0.9)
+    return _normalize_peak(signal_out, target_peak=0.9)
 
 
 def generate_drum_loop(
@@ -108,7 +95,7 @@ def generate_drum_loop(
         offbeat_pos = int((b + 0.5) * beat_sec * fs)
         _overlay_drum_hit(output, hat_hit, offbeat_pos, amplitude=0.6)
 
-    return normalize_peak(output, target_peak=0.7)
+    return _normalize_peak(output, target_peak=0.7)
 
 
 def generate_synthetic_beat(
@@ -139,7 +126,7 @@ def generate_synthetic_beat(
         offbeat_pos = beat_pos + beat_samples // 2
         _overlay_drum_hit(buffer, hihat, offbeat_pos, amplitude=0.4)
 
-    return normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
+    return _normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
 
 
 def generate_waltz_beat(
@@ -165,7 +152,7 @@ def generate_waltz_beat(
         else:
             _overlay_drum_hit(buffer, hihat, beat_pos, amplitude=0.6)
 
-    return normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
+    return _normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
 
 
 def generate_syncopated_breakbeat(
@@ -173,7 +160,23 @@ def generate_syncopated_breakbeat(
     duration_sec: float = 8.0,
     fs: int = DEFAULT_FS,
 ) -> np.ndarray:
-    """Synthesize a syncopated funk breakbeat with offbeat anticipations."""
+    """Synthesize a syncopated funk breakbeat with offbeat anticipations.
+
+    Syncopation Definition:
+        Syncopation is the deliberate placement of rhythmic accents where listeners
+        expect weak beats or silence (the off-beats). In music information retrieval,
+        syncopation challenges rigid tempo grids because strong transients land on
+        fractional beat subdivisions rather than regular integer downbeats.
+
+    Metric Layout (16-step grid of sixteenth notes per 4/4 bar):
+        - Subdivisions: 1 e & a | 2 e & a | 3 e & a | 4 e & a
+        - Steps 0, 4, 8, 12: On-beat quarter-note downbeats.
+        - Steps 4, 12: Standard backbeat snare hits (beats 2 and 4).
+        - Step 0: Downbeat kick (beat 1).
+        - Step 7: Off-beat syncopated kick on the "a" of beat 2 (anticipates beat 3).
+        - Step 10: Off-beat syncopated kick on the "&" of beat 3.
+        - Even steps (0, 2, 4, ...): Steady eighth-note closed hi-hat pulse.
+    """
     total_samples = int(duration_sec * fs)
     buffer = np.zeros(total_samples, dtype=np.float32)
 
@@ -190,16 +193,19 @@ def generate_syncopated_breakbeat(
         step_pos = int(step * sub_samples)
         bar_step = step % 16
 
+        # Continuous 8th-note hi-hat pulse
         if bar_step % 2 == 0:
             _overlay_drum_hit(buffer, hihat, step_pos, amplitude=0.35)
 
+        # Kicks: downbeat (0), anticipated offbeat (7), and mid-bar syncopation (10)
         if bar_step in (0, 7, 10):
             _overlay_drum_hit(buffer, kick, step_pos, amplitude=0.95)
 
+        # Snares: standard backbeat on 2 and 4
         if bar_step in (4, 12):
             _overlay_drum_hit(buffer, snare, step_pos, amplitude=0.8)
 
-    return normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
+    return _normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
 
 
 def generate_tempo_drift_beat(
@@ -208,39 +214,32 @@ def generate_tempo_drift_beat(
     duration_sec: float = 8.0,
     fs: int = DEFAULT_FS,
 ) -> np.ndarray:
-    """Synthesize a beat with a continuously accelerating or decelerating tempo."""
+    """Synthesize a beat with a continuously accelerating or decelerating tempo.
+
+    Constraints:
+        start_bpm and end_bpm must be strictly positive (> 0). In musical timing,
+        negative or zero BPM is physically meaningless.
+    """
+    if start_bpm <= 0.0 or end_bpm <= 0.0:
+        raise ValueError(
+            f"BPM values must be strictly positive. Got start_bpm={start_bpm}, end_bpm={end_bpm}."
+        )
+
     total_samples = int(duration_sec * fs)
     buffer = np.zeros(total_samples, dtype=np.float32)
 
     kick = _synth_kick_drum(fs)
     snare = _synth_snare_drum(fs)
 
-    slope = (end_bpm - start_bpm) / duration_sec
-    beat_idx = 0
-    while True:
-        if abs(slope) < EPSILON_SLOPE:
-            t_beat = beat_idx * (60.0 / start_bpm)
-        else:
-            a = 0.5 * slope / 60.0
-            b = start_bpm / 60.0
-            c = -float(beat_idx)
-            discriminant = b**2 - 4.0 * a * c
-            if discriminant < 0:
-                break
-            t_beat = (-b + np.sqrt(discriminant)) / (2.0 * a)
+    beat_times = _compute_drift_beat_times(start_bpm, end_bpm, duration_sec)
 
-        if t_beat >= duration_sec:
-            break
-
+    for beat_idx, t_beat in enumerate(beat_times):
         sample_pos = int(t_beat * fs)
-        if beat_idx % 2 == 0:
-            _overlay_drum_hit(buffer, kick, sample_pos, amplitude=1.0)
-        else:
-            _overlay_drum_hit(buffer, snare, sample_pos, amplitude=0.8)
+        drum = kick if beat_idx % 2 == 0 else snare
+        amplitude = 1.0 if beat_idx % 2 == 0 else 0.8
+        _overlay_drum_hit(buffer, drum, sample_pos, amplitude=amplitude)
 
-        beat_idx += 1
-
-    return normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
+    return _normalize_peak(buffer, target_peak=DEFAULT_HEADROOM_RATIO)
 
 
 def apply_lossy_cutoff(
@@ -259,26 +258,12 @@ def apply_lossy_cutoff(
     return np.clip(filtered, -1.0, 1.0).astype(np.float32)
 
 
-def encode_mp3_lame(
-    audio: np.ndarray,
-    fs: int = DEFAULT_FS,
-    bitrate_kbps: int = 128,
-) -> np.ndarray:
-    """Encode audio through genuine LAME MP3 encoder via ffmpeg with lowpass fallback."""
-    ffmpeg_bin = shutil.which("ffmpeg")
-    if ffmpeg_bin is None:
-        fc = LAME_FALLBACK_CUTOFF_MAP.get(bitrate_kbps, 16000.0)
-        return apply_lossy_cutoff(audio, cutoff_hz=fc, fs=fs)
-
-    return encode_mp3_subprocess(audio, fs=fs, bitrate_kbps=bitrate_kbps, ffmpeg_bin=ffmpeg_bin)
-
-
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
 
 
-def normalize_peak(audio: np.ndarray, target_peak: float = 1.0) -> np.ndarray:
+def _normalize_peak(audio: np.ndarray, target_peak: float = 1.0) -> np.ndarray:
     """Scale audio to a target peak amplitude without clipping."""
     peak = float(np.max(np.abs(audio))) if len(audio) > 0 else 0.0
     if peak > 0:
@@ -286,14 +271,20 @@ def normalize_peak(audio: np.ndarray, target_peak: float = 1.0) -> np.ndarray:
     return audio.astype(np.float32)
 
 
-def time_samples_for_frequency(duration_sec: float, fs: int) -> np.ndarray:
+def _time_samples_for_frequency(duration_sec: float, fs: int) -> np.ndarray:
     """Return sampled time points [0, duration_sec) spaced at sampling frequency fs."""
     num_samples = int(duration_sec * fs)
     return np.arange(num_samples) / fs
 
 
 def _synth_kick_drum(fs: int) -> np.ndarray:
-    """Synthesize a short, punchy electronic kick drum transient."""
+    """Synthesize a short, punchy electronic kick drum transient (808 style).
+
+    Acoustic Model:
+        - Downward exponential pitch sweep from 150 Hz to 45 Hz with decay tau = 20 ms.
+        - Exponential amplitude decay with tau = 35 ms (120 ms total duration).
+        - High-frequency 1.2 kHz transient click overlaid during first 5 ms for beater attack.
+    """
     duration = 0.12  # 120 ms
     num_samples = int(duration * fs)
     t = np.linspace(0.0, duration, num_samples, endpoint=False, dtype=np.float32)
@@ -312,7 +303,12 @@ def _synth_kick_drum(fs: int) -> np.ndarray:
 
 
 def _synth_snare_drum(fs: int) -> np.ndarray:
-    """Synthesize an electronic snare drum hit (noise burst + resonant body)."""
+    """Synthesize an electronic snare drum hit (noise burst + resonant body).
+
+    Acoustic Model:
+        - High-frequency white noise burst with 40 ms exponential decay (snare wires).
+        - Resonant sinusoidal fundamental at 185 Hz with 25 ms decay (drum head body resonance).
+    """
     duration = 0.15  # 150 ms
     num_samples = int(duration * fs)
     t = np.linspace(0.0, duration, num_samples, endpoint=False, dtype=np.float32)
@@ -328,7 +324,12 @@ def _synth_snare_drum(fs: int) -> np.ndarray:
 
 
 def _synth_hihat(fs: int) -> np.ndarray:
-    """Synthesize a crisp, short closed hi-hat hit."""
+    """Synthesize a crisp, short closed hi-hat hit.
+
+    Acoustic Model:
+        - Differentiated white noise (1st-order high-pass / pre-emphasis filter).
+        - Ultra-short 8 ms exponential decay envelope (metallic transient click).
+    """
     duration = 0.04  # 40 ms
     num_samples = int(duration * fs)
     t = np.linspace(0.0, duration, num_samples, endpoint=False, dtype=np.float32)
@@ -353,44 +354,71 @@ def _overlay_drum_hit(
         buffer[start_idx:end_idx] += hit[:valid_len] * amplitude
 
 
-def encode_mp3_subprocess(
-    audio: np.ndarray,
-    fs: int,
-    bitrate_kbps: int,
-    ffmpeg_bin: str,
-) -> np.ndarray:
-    """Encode audio to MP3 and decode back using an external ffmpeg process."""
-    with tempfile.NamedTemporaryFile(suffix=".wav") as f_in, \
-         tempfile.NamedTemporaryFile(suffix=".mp3") as f_mp3, \
-         tempfile.NamedTemporaryFile(suffix=".wav") as f_out:
+def _is_tempo_stationary(bpm_slope: float) -> bool:
+    """Check if tempo change is negligible within floating-point tolerance."""
+    return abs(bpm_slope) < EPSILON_SLOPE
 
-        stereo_audio = np.column_stack([audio, audio]) if audio.ndim == 1 else audio
-        sf.write(f_in.name, stereo_audio, fs, subtype="PCM_16")
 
-        cmd_enc = [
-            ffmpeg_bin, "-y", "-loglevel", "error",
-            "-i", f_in.name,
-            "-codec:a", "libmp3lame",
-            "-b:a", f"{bitrate_kbps}k",
-            f_mp3.name,
-        ]
-        subprocess.run(cmd_enc, capture_output=True, check=True)
+def _solve_accelerated_beat_time(
+    beat_idx: int, initial_beat_freq: float, beat_accel: float
+) -> float | None:
+    """Solve for beat timestamp t_k under constant tempo acceleration via kinematics.
 
-        cmd_dec = [
-            ffmpeg_bin, "-y", "-loglevel", "error",
-            "-i", f_mp3.name,
-            "-ar", str(fs),
-            "-ac", "1",
-            f_out.name,
-        ]
-        subprocess.run(cmd_dec, capture_output=True, check=True)
+    Kinematics formulation:
+        k(t) = v_0 * t + 0.5 * a * t^2
+        0.5 * a * t^2 + v_0 * t - k = 0
 
-        decoded, _ = sf.read(f_out.name, dtype="float32")
+    When decelerating (beat_accel < 0), instantaneous tempo eventually drops to zero.
+    Beyond that point, no further beats can occur (the drummer halted), so the
+    discriminant becomes negative and this function returns None.
+    """
+    quad_a = 0.5 * beat_accel
+    quad_b = initial_beat_freq
+    quad_c = -float(beat_idx)
 
-        orig_len = len(audio)
-        if len(decoded) > orig_len:
-            decoded = decoded[:orig_len]
-        elif len(decoded) < orig_len:
-            decoded = np.pad(decoded, (0, orig_len - len(decoded)))
+    discriminant = quad_b**2 - 4.0 * quad_a * quad_c
+    if discriminant < 0:
+        return None
 
-        return np.clip(decoded, -1.0, 1.0).astype(np.float32)
+    return float((-quad_b + np.sqrt(discriminant)) / (2.0 * quad_a))
+
+
+def _compute_next_beat_time(
+    beat_idx: int, bpm_slope: float, initial_freq: float, accel: float
+) -> float | None:
+    """Calculate the arrival time of beat k under stationary or drifting tempo."""
+    if _is_tempo_stationary(bpm_slope):
+        return beat_idx / initial_freq
+    return _solve_accelerated_beat_time(beat_idx, initial_freq, accel)
+
+
+def _is_beat_within_duration(t_beat: float, duration_sec: float) -> bool:
+    """Check if the beat timestamp falls within the audio buffer boundary."""
+    return t_beat < duration_sec
+
+
+def _compute_drift_beat_times(
+    start_bpm: float, end_bpm: float, duration_sec: float
+) -> list[float]:
+    """Compute timestamps in seconds for every beat under linear tempo drift.
+
+    Iterates through sequential beats until either:
+    1. The beat timestamp exceeds the audio buffer duration.
+    2. Deceleration brings the tempo to zero (drummer halted).
+    """
+    bpm_slope = (end_bpm - start_bpm) / duration_sec
+    initial_freq = start_bpm / 60.0
+    accel = bpm_slope / 60.0
+
+    beat_times: list[float] = []
+    beat_idx = 0
+
+    while True:
+        t_beat = _compute_next_beat_time(beat_idx, bpm_slope, initial_freq, accel)
+        if t_beat is None or not _is_beat_within_duration(t_beat, duration_sec):
+            break
+
+        beat_times.append(t_beat)
+        beat_idx += 1
+
+    return beat_times
