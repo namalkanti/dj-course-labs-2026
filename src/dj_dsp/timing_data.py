@@ -32,19 +32,19 @@ class OnsetEnvelope:
     Fields:
         values: 1D array of onset strength per STFT frame (shape: N_frames).
         times: 1D array of frame timestamps in seconds.
-        sr: Audio sample rate in Hz (e.g. 44100).
+        fs: Audio sample rate in Hz (e.g. 44100). Note: mirrors librosa's 'sr'.
         hop_length: Hop size between STFT frames in audio samples (e.g. 512).
     """
 
     values: np.ndarray
     times: np.ndarray
-    sr: int
+    fs: int
     hop_length: int
 
     @property
     def frame_rate(self) -> float:
-        """Rate of envelope frames per second (sr / hop_length)."""
-        return self.sr / self.hop_length
+        """Rate of envelope frames per second (fs / hop_length)."""
+        return self.fs / self.hop_length
 
     @property
     def duration_sec(self) -> float:
@@ -66,8 +66,8 @@ class TempoResult:
 
 
 @dataclass(frozen=True)
-class BeatTrackResult:
-    """Dynamic beat locations across time from Ellis DP trellis tracking.
+class TemporalBeatAlignment:
+    """Dynamic beat locations aligned across time via DP trellis tracking.
 
     Fields:
         beat_frames: 1D array of STFT frame indices for each detected beat.
@@ -106,8 +106,8 @@ class ComputeOnsetFn(Protocol):
 
     def __call__(
         self,
-        y: np.ndarray,
-        sr: int,
+        audio: np.ndarray,
+        fs: int,
         hop_length: int = 512,
     ) -> OnsetEnvelope: ...
 
@@ -123,14 +123,14 @@ class EstimateTempoFn(Protocol):
     ) -> TempoResult: ...
 
 
-class TrackBeatsFn(Protocol):
-    """Track dynamic beat locations using dynamic programming (Ellis trellis)."""
+class AlignBeatsFn(Protocol):
+    """Align dynamic beat locations using dynamic programming (Ellis trellis)."""
 
     def __call__(
         self,
         onset_env: OnsetEnvelope,
         bpm: float | None = None,
-    ) -> BeatTrackResult: ...
+    ) -> TemporalBeatAlignment: ...
 
 
 class DetectMeterFn(Protocol):
@@ -150,5 +150,5 @@ class TimingBackend:
     name: str
     compute_onset_envelope: ComputeOnsetFn
     estimate_tempo: EstimateTempoFn
-    track_beats: TrackBeatsFn
+    align_beats: AlignBeatsFn
     detect_meter: DetectMeterFn

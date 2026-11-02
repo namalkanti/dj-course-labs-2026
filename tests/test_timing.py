@@ -12,6 +12,7 @@ import pytest
 from dj_dsp.synth import (
     generate_drum_loop,
     generate_syncopated_breakbeat,
+    generate_synthetic_beat,
     generate_tempo_drift_beat,
     generate_waltz_beat,
 )
@@ -32,7 +33,7 @@ BREAKBEAT_TOLERANCE_BPM = 3.0
 
 @pytest.fixture
 def synthetic_house_audio() -> tuple[np.ndarray, int]:
-    audio = generate_drum_loop(bpm=128.0, duration_sec=8.0, fs=SAMPLE_RATE)
+    audio = generate_synthetic_beat(bpm=128.0, duration_sec=8.0, fs=SAMPLE_RATE)
     return audio, SAMPLE_RATE
 
 
@@ -68,26 +69,26 @@ def backend(request) -> TimingBackend:
 
 def test_onset_envelope_extraction(backend, synthetic_house_audio):
     """Verify onset envelope produces non-negative 1D flux aligned with duration."""
-    y, sr = synthetic_house_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_house_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
 
-    assert_envelope_structure_valid(onset_env, y, sr, HOP_LENGTH)
+    assert_envelope_structure_valid(onset_env, audio, fs, HOP_LENGTH)
 
 
 def test_tempo_estimation_house(backend, synthetic_house_audio):
     """Verify 128 BPM house beat is detected within tolerance."""
-    y, sr = synthetic_house_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_house_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     res = backend.estimate_tempo(onset_env)
 
     assert_tempo_close(res.bpm, 128.0, tolerance_bpm=TEMPO_TOLERANCE_BPM)
-    assert_beat_interval_matches_bpm(res.beat_interval_frames, 128.0, sr, HOP_LENGTH)
+    assert_beat_interval_matches_bpm(res.beat_interval_frames, 128.0, fs, HOP_LENGTH)
 
 
 def test_tempo_estimation_waltz(backend, synthetic_waltz_audio):
     """Verify 120 BPM 3/4 waltz tempo is detected within tolerance."""
-    y, sr = synthetic_waltz_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_waltz_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     res = backend.estimate_tempo(onset_env)
 
     assert_tempo_close(res.bpm, 120.0, tolerance_bpm=TEMPO_TOLERANCE_BPM)
@@ -95,8 +96,8 @@ def test_tempo_estimation_waltz(backend, synthetic_waltz_audio):
 
 def test_tempo_estimation_breakbeat(backend, synthetic_breakbeat_audio):
     """Verify 140 BPM breakbeat tempo is detected despite syncopated snares."""
-    y, sr = synthetic_breakbeat_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_breakbeat_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     res = backend.estimate_tempo(onset_env)
 
     assert_tempo_close(res.bpm, 140.0, tolerance_bpm=BREAKBEAT_TOLERANCE_BPM)
@@ -104,8 +105,8 @@ def test_tempo_estimation_breakbeat(backend, synthetic_breakbeat_audio):
 
 def test_meter_detection_four_on_floor(backend, synthetic_house_audio):
     """Verify four-on-the-floor kick/snare pattern is classified as 4/4 meter."""
-    y, sr = synthetic_house_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_house_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     tempo_res = backend.estimate_tempo(onset_env)
     meter_res = backend.detect_meter(
         onset_env, beat_interval_frames=tempo_res.beat_interval_frames
@@ -117,8 +118,8 @@ def test_meter_detection_four_on_floor(backend, synthetic_house_audio):
 
 def test_meter_detection_waltz(backend, synthetic_waltz_audio):
     """Verify 3/4 waltz pattern is classified as 3/4 meter."""
-    y, sr = synthetic_waltz_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_waltz_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     tempo_res = backend.estimate_tempo(onset_env)
     meter_res = backend.detect_meter(
         onset_env, beat_interval_frames=tempo_res.beat_interval_frames
@@ -130,9 +131,9 @@ def test_meter_detection_waltz(backend, synthetic_waltz_audio):
 
 def test_beat_tracking_monotonic_and_aligned(backend, synthetic_house_audio):
     """Verify dynamic beat tracking returns strictly increasing frames matching beat count."""
-    y, sr = synthetic_house_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
-    track_res = backend.track_beats(onset_env)
+    audio, fs = synthetic_house_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
+    track_res = backend.align_beats(onset_env)
 
     assert_beat_frames_valid(track_res.beat_frames, len(onset_env.values))
     assert_tempo_close(track_res.bpm, 128.0, tolerance_bpm=TEMPO_TOLERANCE_BPM)
@@ -140,18 +141,18 @@ def test_beat_tracking_monotonic_and_aligned(backend, synthetic_house_audio):
 
 def test_beat_tracking_adapts_to_tempo_drift(backend, synthetic_drift_audio):
     """Verify dynamic beat tracking reflects accelerating tempo across time."""
-    y, sr = synthetic_drift_audio
-    onset_env = backend.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
-    track_res = backend.track_beats(onset_env)
+    audio, fs = synthetic_drift_audio
+    onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
+    track_res = backend.align_beats(onset_env)
 
     assert_beat_intervals_shorten(track_res.beat_frames)
 
 
 def test_backend_cross_agreement(synthetic_house_audio):
     """Verify librosa and naive backends agree on BPM within tolerance on standard audio."""
-    y, sr = synthetic_house_audio
-    env_librosa = LIBROSA_BACKEND.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
-    env_naive = NAIVE_BACKEND.compute_onset_envelope(y, sr, hop_length=HOP_LENGTH)
+    audio, fs = synthetic_house_audio
+    env_librosa = LIBROSA_BACKEND.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
+    env_naive = NAIVE_BACKEND.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
 
     res_librosa = LIBROSA_BACKEND.estimate_tempo(env_librosa)
     res_naive = NAIVE_BACKEND.estimate_tempo(env_naive)
@@ -165,14 +166,14 @@ def test_backend_cross_agreement(synthetic_house_audio):
 
 
 def assert_envelope_structure_valid(
-    onset_env: OnsetEnvelope, y: np.ndarray, sr: int, hop_length: int
+    onset_env: OnsetEnvelope, audio: np.ndarray, fs: int, hop_length: int
 ) -> None:
     assert isinstance(onset_env, OnsetEnvelope)
     assert onset_env.values.ndim == 1
     assert len(onset_env.values) > 0
     assert np.all(onset_env.values >= 0.0), "Onset envelope values must be non-negative"
     assert len(onset_env.times) == len(onset_env.values)
-    expected_frames = int(np.ceil(len(y) / hop_length))
+    expected_frames = int(np.ceil(len(audio) / hop_length))
     assert abs(len(onset_env.values) - expected_frames) <= 2
 
 

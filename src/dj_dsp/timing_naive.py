@@ -10,17 +10,17 @@ Implements the TimingBackend protocol using first-principles DSP math:
 import numpy as np
 
 from dj_dsp.timing_data import (
-    BeatTrackResult,
     MeterResult,
     OnsetEnvelope,
     TempoResult,
+    TemporalBeatAlignment,
     TimingBackend,
 )
 
 
 def compute_onset_envelope(
-    y: np.ndarray,
-    sr: int,
+    audio: np.ndarray,
+    fs: int,
     hop_length: int = 512,
 ) -> OnsetEnvelope:
     """Compute onset strength envelope from scratch via STFT spectral flux."""
@@ -36,12 +36,12 @@ def estimate_tempo(
     raise NotImplementedError("Stub: naive estimate_tempo")
 
 
-def track_beats(
+def align_beats(
     onset_env: OnsetEnvelope,
     bpm: float | None = None,
-) -> BeatTrackResult:
+) -> TemporalBeatAlignment:
     """Track dynamic beat locations via 1D Ellis DP trellis recursion and backtracking."""
-    raise NotImplementedError("Stub: naive track_beats")
+    raise NotImplementedError("Stub: naive align_beats")
 
 
 def detect_meter(
@@ -56,6 +56,6 @@ NAIVE_BACKEND = TimingBackend(
     name="naive",
     compute_onset_envelope=compute_onset_envelope,
     estimate_tempo=estimate_tempo,
-    track_beats=track_beats,
+    align_beats=align_beats,
     detect_meter=detect_meter,
 )
