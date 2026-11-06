@@ -104,23 +104,27 @@ def load_dsp_modules():
 def load_plotting():
     from dj_dsp.spectral import (
         analyze_spectral_cutoff,
-        compute_welch_spectrum,
+        compute_rgb_blended_waveform,
         compute_stft_spectrogram,
         compute_three_band_waveform,
+        compute_welch_spectrum,
     )
     from dj_dsp.plotting import (
         plot_overlaid_welch_shelf,
-        plot_welch_spectrum,
+        plot_rgb_blended_waveform,
         plot_stft_spectrogram,
         plot_three_band_waveform,
+        plot_welch_spectrum,
     )
 
     return (
         analyze_spectral_cutoff,
+        compute_rgb_blended_waveform,
         compute_stft_spectrogram,
         compute_three_band_waveform,
         compute_welch_spectrum,
         plot_overlaid_welch_shelf,
+        plot_rgb_blended_waveform,
         plot_stft_spectrogram,
         plot_three_band_waveform,
         plot_welch_spectrum,
@@ -207,12 +211,14 @@ def get_selected_signals(catalog, signal_selector_ex1, signal_selector_ex2):
 
 @app.cell(hide_code=True)
 def make_analysis_tabs_helper(
+    compute_rgb_blended_waveform,
     compute_stft_spectrogram,
     compute_three_band_waveform,
     compute_welch_spectrum,
     io,
     mo,
     plot_overlaid_welch_shelf,
+    plot_rgb_blended_waveform,
     plot_stft_spectrogram,
     plot_three_band_waveform,
     plot_welch_spectrum,
@@ -231,10 +237,11 @@ def make_analysis_tabs_helper(
     def render_analysis_tabs(audio, fs, cutoff_marker_hz=None):
         """Construct a tabbed Marimo UI component displaying the core audio diagnostic suite.
 
-        Transforms a raw 1D audio time series into three standard analytical projections:
-        1. Pioneer CDJ-3000 3-band waveform envelope (time domain, frequency-separated).
-        2. Welch Power Spectral Density (frequency domain, musical log scale).
-        3. 2D Short-Time Fourier Transform spectrogram (time-frequency joint domain).
+        Transforms a raw 1D audio time series into four standard analytical projections:
+        1. 3-Band Waveform envelope (time domain, frequency-separated into Low/Mid/High).
+        2. RGB Blended Waveform (time domain, dynamic spectral flux mapped to RGB color).
+        3. Welch Power Spectral Density (frequency domain, musical log scale).
+        4. 2D Short-Time Fourier Transform spectrogram (time-frequency joint domain).
 
         Parameters
         ----------
@@ -251,9 +258,14 @@ def make_analysis_tabs_helper(
             Interactive Marimo tab widget containing individual view tabs plus a stacked overview tab.
         """
         waveform_view = compute_three_band_waveform(audio, fs=fs)
-        fig_wf, _ = plot_three_band_waveform(waveform_view)
-        fig_wf.tight_layout()
-        img_wf = fig_to_image(fig_wf)
+        fig_tb, _ = plot_three_band_waveform(waveform_view)
+        fig_tb.tight_layout()
+        img_tb = fig_to_image(fig_tb)
+
+        rgb_view = compute_rgb_blended_waveform(audio, fs=fs)
+        fig_rgb, _ = plot_rgb_blended_waveform(rgb_view)
+        fig_rgb.tight_layout()
+        img_rgb = fig_to_image(fig_rgb)
 
         spectrum_view = compute_welch_spectrum(audio, fs=fs)
         fig_spec, _ = plot_welch_spectrum(spectrum_view, log_freq=True, cutoff_marker_hz=cutoff_marker_hz)
@@ -265,14 +277,30 @@ def make_analysis_tabs_helper(
         fig_stft.tight_layout()
         img_stft = fig_to_image(fig_stft)
 
-        card_wf = mo.vstack([
+        card_tb = mo.vstack([
             mo.md(
-                "##### DJ-Style 3-Band Waveform (Illustrative Model)\n"
-                "_Time-domain energy envelope split using this lab's illustrative crossovers: "
-                "**Cyan** (Low, <250 Hz), **Orange** (Mid, 250–2500 Hz), **Blue** (High, >2500 Hz)._"
+                "##### 3-Band Waveform (Stacked Crossover Model)\n"
+                "_Time-domain energy envelope split using 4th-order Butterworth crossovers: "
+                "**Cyan** (Low, <250 Hz), **Amber** (Mid, 250–2500 Hz), **Blue** (High, ≥2500 Hz). "
+                "Isolates discrete frequency band dynamics._"
             ),
-            img_wf,
+            img_tb,
         ])
+
+        card_rgb = mo.vstack([
+            mo.md(
+                r"##### RGB Blended Waveform (Dynamic Spectral Flux)" "\n"
+                r"_Single unified peak envelope with spectral energy dynamically mapped into color: "
+                r"**Red** (Bass < 250 Hz), **Green** (Mids 250–2500 Hz), **Blue** (Highs ≥ 2500 Hz) "
+                r"with gamma compression ($\gamma = 0.5$) to reveal transient hi-hats and snares._"
+            ),
+            img_rgb,
+        ])
+
+        card_waveform_tabs = mo.ui.tabs({
+            "3-Band Waveform": card_tb,
+            "RGB Blended Waveform": card_rgb,
+        })
 
         card_spec = mo.vstack([
             mo.md(
@@ -293,10 +321,10 @@ def make_analysis_tabs_helper(
         ])
 
         return mo.ui.tabs({
-            "CDJ 3-Band Waveform": card_wf,
+            "Waveform": card_waveform_tabs,
             "Welch Power Spectrum": card_spec,
             "2D STFT Spectrogram": card_stft,
-            "All Views (Stacked)": mo.vstack([card_wf, card_spec, card_stft], gap=1.5),
+            "All Views (Stacked)": mo.vstack([card_tb, card_rgb, card_spec, card_stft], gap=1.5),
         })
 
     def render_comparison_tabs(

@@ -7,6 +7,7 @@ Follows clean plotting conventions:
 """
 
 from typing import Optional, Tuple
+from matplotlib.collections import LineCollection
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
@@ -32,9 +33,9 @@ def plot_three_band_waveform(
     view: ThreeBandWaveformView,
     ax: Optional[plt.Axes] = None,
     figsize: Tuple[float, float] = (11.0, 4.0),
-    title: str = "Rekordbox 3-Band Waveform (CDJ-3000 Style)",
+    title: str = "3-Band Waveform",
 ) -> Tuple[plt.Figure, plt.Axes]:
-    """Render CDJ-3000 style stacked 3-band amplitude envelopes (Low, Mid, High)."""
+    """Render stacked 3-band amplitude envelopes (Low, Mid, High)."""
     fig, ax = ensure_axes(ax, figsize)
 
     base_low = view.low
@@ -52,6 +53,38 @@ def plot_three_band_waveform(
 
     apply_standard_plot_styling(ax, title=title, xlabel="Time (seconds)", ylabel="Averaged (RMS) Amplitude")
     ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
+
+    return fig, ax
+
+
+def plot_rgb_blended_waveform(
+    view: RGBBlendedWaveformView,
+    ax: Optional[plt.Axes] = None,
+    figsize: Tuple[float, float] = (11.0, 4.0),
+    title: str = "RGB Blended Waveform",
+) -> Tuple[plt.Figure, plt.Axes]:
+    """Render unified peak envelope with dynamic RGB color blending."""
+    fig, ax = ensure_axes(ax, figsize)
+
+    # Construct vertical line segments spanning [envelope_lower, envelope_upper] per frame
+    segments = np.stack(
+        [
+            np.column_stack([view.times, view.envelope_lower]),
+            np.column_stack([view.times, view.envelope_upper]),
+        ],
+        axis=1,
+    )
+
+    line_collection = LineCollection(segments, colors=view.rgb_colors, linewidths=1.2, alpha=0.95)
+    ax.add_collection(line_collection)
+    ax.axhline(0.0, color="#ffffff", lw=0.5, alpha=0.4)
+
+    ax.set_xlim(view.times[0], view.times[-1])
+    max_val = max(float(np.max(view.envelope_upper)), float(np.max(-view.envelope_lower))) * 1.08
+    max_val = max(max_val, 1e-4)
+    ax.set_ylim(-max_val, max_val)
+
+    apply_standard_plot_styling(ax, title=title, xlabel="Time (seconds)", ylabel="Peak Amplitude")
 
     return fig, ax
 

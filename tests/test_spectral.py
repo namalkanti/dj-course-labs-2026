@@ -22,6 +22,10 @@ from dj_dsp.spectral_data import (
     SpectrumView,
     ThreeBandWaveformView,
 )
+from dj_dsp.plotting import (
+    plot_rgb_blended_waveform,
+    plot_three_band_waveform,
+)
 from dj_dsp.spectral import (
     analyze_spectral_cutoff,
     compute_rgb_blended_waveform,
@@ -155,6 +159,47 @@ def test_three_band_frequency_isolation(freq_hz: float, dominant_channel: int, c
         freq_hz=freq_hz,
         channel_name=channel_name,
     )
+
+
+@pytest.mark.parametrize(
+    "freq_hz, dominant_channel, channel_name",
+    [
+        (80.0, 0, "Red (Bass < 250 Hz)"),
+        (1000.0, 1, "Green (Mid 250 Hz - 2.5 kHz)"),
+        (8000.0, 2, "Blue (High >= 2.5 kHz)"),
+    ],
+)
+def test_rgb_blended_waveform_frequency_color_dominance(
+    freq_hz: float, dominant_channel: int, channel_name: str
+):
+    """Pure tones must produce dominant color channel corresponding to their frequency band."""
+    fs = 44100
+    audio = generate_pure_sine(freq_hz, duration_sec=1.0, fs=fs)
+
+    rgb_view = compute_rgb_blended_waveform(audio, fs=fs, hop_length=256)
+
+    # Ignore transient startup frames
+    transient_cutoff = int(len(rgb_view.times) * 0.1)
+    mean_colors = np.mean(rgb_view.rgb_colors[transient_cutoff:], axis=0)
+    dominant_rgb = int(np.argmax(mean_colors))
+    assert dominant_rgb == dominant_channel, (
+        f"For {freq_hz} Hz expected dominant {channel_name}, but got mean colors {mean_colors}"
+    )
+
+
+def test_plot_rgb_blended_waveform_renders_canvas():
+    """Rendering RGB blended waveform must produce valid figure and axes with correct limits."""
+    fs = 44100
+    audio = generate_pure_sine(440.0, duration_sec=1.0, fs=fs)
+    rgb_view = compute_rgb_blended_waveform(audio, fs=fs, hop_length=256)
+
+    fig, ax = plot_rgb_blended_waveform(rgb_view)
+
+    assert fig is not None
+    assert ax is not None
+    assert ax.get_xlim() == (pytest.approx(rgb_view.times[0]), pytest.approx(rgb_view.times[-1]))
+    assert ax.get_ylim()[0] < 0.0 < ax.get_ylim()[1]
+
 
 
 def test_cutoff_detection_pristine_wideband():
