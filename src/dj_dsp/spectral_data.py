@@ -89,12 +89,6 @@ class ThreeBandWaveformView:
     mid: np.ndarray
     high: np.ndarray
 
-    def to_rgb_blended(
-        self, envelope_upper: np.ndarray, envelope_lower: np.ndarray
-    ) -> "RGBBlendedWaveformView":
-        """Convert 3-band envelopes into a classic CDJ-2000 blended RGB waveform lens."""
-        return blend_envelopes_to_rgb(self, envelope_upper, envelope_lower)
-
 
 @dataclass(frozen=True)
 class RGBBlendedWaveformView:
@@ -158,23 +152,3 @@ def crop_spectrum_view(
         sub_power -= float(np.max(sub_power))
 
     return SpectrumView(frequencies=sub_freqs, power_db=sub_power)
-
-
-def blend_envelopes_to_rgb(
-    view: ThreeBandWaveformView,
-    envelope_upper: np.ndarray,
-    envelope_lower: np.ndarray,
-) -> RGBBlendedWaveformView:
-    """Compute normalized RGB ratios from Low, Mid, High envelopes for CDJ-2000 style rendering."""
-    total_energy = view.low + view.mid + view.high + RGB_NORMALIZATION_EPSILON
-    r = np.clip(view.low / total_energy, 0.0, 1.0)
-    g = np.clip(view.mid / total_energy, 0.0, 1.0)
-    b = np.clip(view.high / total_energy, 0.0, 1.0)
-    rgb_colors = np.column_stack([r, g, b])
-
-    return RGBBlendedWaveformView(
-        times=view.times,
-        envelope_upper=envelope_upper,
-        envelope_lower=envelope_lower,
-        rgb_colors=rgb_colors,
-    )

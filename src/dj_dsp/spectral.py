@@ -17,8 +17,10 @@ from dj_dsp.spectral_data import (
     SpectrogramView,
     SpectrumView,
     ThreeBandWaveformView,
+    RGBBlendedWaveformView,
 )
 
+DEFAULT_GAMMA_COMPRESSION = 0.5
 SILENCE_THRESHOLD_DBFS = -85.0
 INSUFFICIENT_HF_ENERGY_DBFS = -75.0
 PASSBAND_REF_F_MIN_HZ = 11000.0
@@ -103,19 +105,38 @@ def compute_three_band_waveform(
     high_cutoff: float = 2500.0,
 ) -> ThreeBandWaveformView:
     """Compute Pioneer Rekordbox 3-band amplitude envelopes (CDJ-3000 style)."""
-    sig_low, sig_mid, sig_high = filter_three_bands(audio, fs, low_cutoff, high_cutoff)
-    rms_low, rms_mid, rms_high = compute_framed_rms_bands(
-        [sig_low, sig_mid, sig_high], hop_length=hop_length
+    times, rms_low, rms_mid, rms_high = decompose_three_bands(
+        audio, fs=fs, hop_length=hop_length, low_cutoff=low_cutoff, high_cutoff=high_cutoff
+    )
+    return ThreeBandWaveformView(
+        times=times,
+        low=rms_low,
+        mid=rms_mid,
+        high=rms_high,
     )
 
-    num_frames = len(rms_low)
-    times = (np.arange(num_frames) * hop_length + (hop_length / 2.0)) / fs
 
-    return ThreeBandWaveformView(
-        times=times.astype(np.float64),
-        low=rms_low.astype(np.float64),
-        mid=rms_mid.astype(np.float64),
-        high=rms_high.astype(np.float64),
+def compute_rgb_blended_waveform(
+    audio: np.ndarray,
+    fs: int = 44100,
+    hop_length: int = 256,
+    low_cutoff: float = 250.0,
+    high_cutoff: float = 2500.0,
+    gamma: float = DEFAULT_GAMMA_COMPRESSION,
+) -> RGBBlendedWaveformView:
+    """Compute Pioneer CDJ-2000 style blended RGB waveform with peak envelope."""
+    times, rms_low, rms_mid, rms_high = decompose_three_bands(
+        audio, fs=fs, hop_length=hop_length, low_cutoff=low_cutoff, high_cutoff=high_cutoff
+    )
+    num_frames = len(times)
+    env_upper, env_lower = compute_framed_peak_envelope(audio, num_frames=num_frames, hop_length=hop_length)
+    rgb_colors = compute_gamma_compressed_rgb(rms_low, rms_mid, rms_high, gamma=gamma)
+
+    return RGBBlendedWaveformView(
+        times=times,
+        envelope_upper=env_upper,
+        envelope_lower=env_lower,
+        rgb_colors=rgb_colors,
     )
 
 
@@ -162,6 +183,52 @@ def analyze_spectral_cutoff(
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
+
+
+def decompose_three_bands(
+    audio: np.ndarray,
+    fs: int = 44100,
+    hop_length: int = 256,
+    low_cutoff: float = 250.0,
+    high_cutoff: float = 2500.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split audio into Low, Mid, High bands and compute framed RMS power envelopes."""
+    sig_low, sig_mid, sig_high = filter_three_bands(audio, fs, low_cutoff, high_cutoff)
+    rms_low, rms_mid, rms_high = compute_framed_rms_bands(
+        [sig_low, sig_mid, sig_high], hop_length=hop_length
+    )
+    num_frames = len(rms_low)
+    times = (np.arange(num_frames) * hop_length + (hop_length / 2.0)) / fs
+    return (
+        times.astype(np.float64),
+        rms_low.astype(np.float64),
+        rms_mid.astype(np.float64),
+        rms_high.astype(np.float64),
+    )
+
+
+def compute_framed_peak_envelope(
+    audio: np.ndarray, num_frames: int, hop_length: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Frame raw audio into min/max peak bounds matching frame count."""
+    target_len = num_frames * hop_length
+    pad_len = target_len - len(audio)
+    padded = np.pad(audio, (0, pad_len)) if pad_len > 0 else audio[:target_len]
+    frames = padded.reshape(num_frames, hop_length)
+    env_upper = np.max(frames, axis=1).astype(np.float64)
+    env_lower = np.min(frames, axis=1).astype(np.float64)
+    return env_upper, env_lower
+
+
+def compute_gamma_compressed_rgb(
+    low: np.ndarray, mid: np.ndarray, high: np.ndarray, gamma: float
+) -> np.ndarray:
+    """Compute normalized (R, G, B) colors from band RMS values with gamma compression."""
+    r = low ** gamma
+    g = mid ** gamma
+    b = high ** gamma
+    total = r + g + b + 1e-9
+    return np.column_stack([r / total, g / total, b / total]).astype(np.float64)
 
 
 def filter_three_bands(

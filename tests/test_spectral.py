@@ -24,6 +24,7 @@ from dj_dsp.spectral_data import (
 )
 from dj_dsp.spectral import (
     analyze_spectral_cutoff,
+    compute_rgb_blended_waveform,
     compute_stft_spectrogram,
     compute_three_band_waveform,
     compute_welch_spectrum,
@@ -112,24 +113,18 @@ def test_three_band_waveform_shapes_and_bounds():
     assert_three_band_waveform_valid(view, audio_len=len(audio), hop_length=hop_length)
 
 
-def test_three_band_to_rgb_blended_conversion():
-    """Converting 3-band envelopes to classic RGB must yield valid [0, 1] color coordinates."""
+def test_compute_rgb_blended_waveform():
+    """Computing RGB blended waveform must yield valid envelope and [0, 1] color coordinates."""
     fs = 44100
     duration_sec = 1.0
     audio = generate_pure_sine(500.0, duration_sec=duration_sec, fs=fs)
     hop_length = 256
 
-    three_band = compute_three_band_waveform(audio, fs=fs, hop_length=hop_length)
+    rgb_view = compute_rgb_blended_waveform(audio, fs=fs, hop_length=hop_length)
 
-    # Mock full-signal peak envelope
-    num_frames = len(three_band.times)
-    env_upper = np.full(num_frames, 0.8)
-    env_lower = np.full(num_frames, -0.8)
-
-    rgb_view = three_band.to_rgb_blended(envelope_upper=env_upper, envelope_lower=env_lower)
-
+    expected_frames = int(np.ceil(len(audio) / hop_length))
     assert isinstance(rgb_view, RGBBlendedWaveformView)
-    assert_rgb_blended_waveform_envelope_valid(rgb_view, expected_frames=num_frames)
+    assert_rgb_blended_waveform_envelope_valid(rgb_view, expected_frames=expected_frames)
     assert_rgb_colors_within_unit_cube(rgb_view.rgb_colors)
 
 
