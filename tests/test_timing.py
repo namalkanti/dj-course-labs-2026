@@ -86,7 +86,11 @@ def test_tempo_estimation_house(backend, synthetic_house_audio):
 
 
 def test_tempo_estimation_waltz(backend, synthetic_waltz_audio):
-    """Verify 120 BPM 3/4 waltz tempo is detected within tolerance."""
+    """Verify 120 BPM 3/4 waltz tempo is detected within tolerance by both backends.
+
+    In 3/4 time (kick-hat-hat), there is no alternating 2-beat trap, so both backends
+    agree cleanly on the 120 BPM fundamental.
+    """
     audio, fs = synthetic_waltz_audio
     onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     res = backend.estimate_tempo(onset_env)

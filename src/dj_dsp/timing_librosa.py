@@ -6,7 +6,6 @@ and librosa.beat.beat_track.
 
 import librosa
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 
 from dj_dsp.timing_data import (
     Meter,
@@ -15,6 +14,10 @@ from dj_dsp.timing_data import (
     TempoResult,
     TemporalBeatAlignment,
     TimingBackend,
+)
+from dj_dsp.utils import (
+    bpm_to_lag_frames,
+    classify_meter_from_autocorr,
 )
 
 DEFAULT_HOP_LENGTH = 512
@@ -63,7 +66,7 @@ def estimate_tempo(
         max_tempo=max_bpm,
     )
     bpm = float(np.atleast_1d(bpm_arr)[0])
-    beat_interval_frames = _bpm_to_beat_interval_frames(bpm, onset_env.frame_rate)
+    beat_interval_frames = bpm_to_lag_frames(bpm, onset_env.fs, onset_env.hop_length)
 
     return TempoResult(bpm=bpm, beat_interval_frames=beat_interval_frames)
 
@@ -105,7 +108,14 @@ def detect_meter(
     if beat_interval_frames is None:
         beat_interval_frames = estimate_tempo(onset_env).beat_interval_frames
 
-    return _compute_meter_from_autocorr(onset_env.values, beat_interval_frames)
+    max_lag = _bound_max_autocorr_lag(len(onset_env.values), beat_interval_frames)
+    autocorr = librosa.autocorrelate(onset_env.values, max_size=max_lag)
+
+    return classify_meter_from_autocorr(
+        autocorr=autocorr,
+        signal_len=len(onset_env.values),
+        beat_interval_frames=beat_interval_frames,
+    )
 
 
 LIBROSA_BACKEND = TimingBackend(
@@ -120,12 +130,6 @@ LIBROSA_BACKEND = TimingBackend(
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
-
-
-def _bpm_to_beat_interval_frames(bpm: float, frame_rate: float) -> int:
-    """Convert tempo in BPM to nominal inter-beat lag in envelope frames."""
-    seconds_per_beat = 60.0 / bpm
-    return int(round(seconds_per_beat * frame_rate))
 
 
 def _derive_effective_bpm(beat_times: np.ndarray, fallback_bpm: float) -> float:
@@ -148,75 +152,3 @@ def _bound_max_autocorr_lag(
     """Bound evaluation lag to max_beats, preventing out-of-bounds on short audio."""
     target_lag_frames = int(round(max_beats * beat_interval_frames))
     return min(total_frames, target_lag_frames)
-
-
-def _find_peak_in_lag_window(
-    autocorr: np.ndarray,
-    center_lag: int,
-    radius: int,
-) -> float:
-    """Find maximum autocorrelation value within a window centered at center_lag."""
-    start_idx = max(0, center_lag - radius)
-    end_idx = min(len(autocorr), center_lag + radius + 1)
-    if start_idx >= len(autocorr) or start_idx >= end_idx:
-        return 0.0
-    return float(np.max(autocorr[start_idx:end_idx]))
-
-
-def _calculate_normalized_ratio_confidence(ratio: float) -> float:
-    """Compute symmetric confidence in [0, 1] based on distance of ratio from 1.0."""
-    relative_difference = abs(ratio - 1.0) / (ratio + 1.0)
-    return float(np.clip(relative_difference, 0.0, 1.0))
-
-
-def _normalize_and_smooth_autocorr(
-    autocorr: np.ndarray,
-    total_frames: int,
-    smoothing_sigma: float = AUTOCORR_SMOOTHING_SIGMA_FRAMES,
-) -> np.ndarray:
-    """Normalize raw autocorrelation by overlap count and smooth fractional lags.
-
-    Why this is required:
-    1. Unbiased Normalization: Raw autocorrelation sums (total_frames - lag) terms.
-       Without dividing by overlap count, longer lags naturally decay toward zero,
-       penalizing 4-beat lag relative to 3-beat lag.
-    2. Fractional Lag Smoothing: Tempos often yield non-integer frame intervals
-       (e.g., 128 BPM has 40.375 frames/beat, placing 4 beats at 161.5 frames).
-       A mild Gaussian blur recombines energy split across adjacent integer bins.
-    """
-    lags = np.arange(len(autocorr))
-    overlap_counts = total_frames - lags
-    unbiased_autocorr = autocorr / overlap_counts
-    return gaussian_filter1d(unbiased_autocorr, sigma=smoothing_sigma)
-
-
-def _compute_meter_from_autocorr(
-    onset_values: np.ndarray,
-    beat_interval_frames: int,
-) -> MeterResult:
-    """Sample onset autocorrelation at 3-beat vs 4-beat bar lags to classify meter."""
-    max_lag = _bound_max_autocorr_lag(len(onset_values), beat_interval_frames)
-    autocorr = librosa.autocorrelate(onset_values, max_size=max_lag)
-    smoothed_autocorr = _normalize_and_smooth_autocorr(autocorr, len(onset_values))
-
-    search_radius = max(
-        1, int(round(beat_interval_frames * LAG_SEARCH_TOLERANCE_FRACTION))
-    )
-    prominence_3_beat = _find_peak_in_lag_window(
-        smoothed_autocorr,
-        center_lag=BAR_BEATS_THREE_FOUR * beat_interval_frames,
-        radius=search_radius,
-    )
-    prominence_4_beat = _find_peak_in_lag_window(
-        smoothed_autocorr,
-        center_lag=BAR_BEATS_FOUR_FOUR * beat_interval_frames,
-        radius=search_radius,
-    )
-
-    ratio = (prominence_4_beat + NUMERICAL_EPSILON) / (
-        prominence_3_beat + NUMERICAL_EPSILON
-    )
-    meter = Meter.FOUR_FOUR if ratio >= 1.0 else Meter.THREE_FOUR
-    confidence = _calculate_normalized_ratio_confidence(ratio)
-
-    return MeterResult(meter=meter, ratio=ratio, confidence=confidence)
