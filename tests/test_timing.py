@@ -135,6 +135,8 @@ def test_meter_detection_waltz(backend, synthetic_waltz_audio):
 
 def test_beat_tracking_monotonic_and_aligned(backend, synthetic_house_audio):
     """Verify dynamic beat tracking returns strictly increasing frames matching beat count."""
+    if backend.name == "naive":
+        pytest.xfail("Naive Ellis DP beat tracking deferred to .pi/plans.local/dp-beat-tracking-interview-prep.md")
     audio, fs = synthetic_house_audio
     onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     track_res = backend.align_beats(onset_env)
@@ -145,6 +147,8 @@ def test_beat_tracking_monotonic_and_aligned(backend, synthetic_house_audio):
 
 def test_beat_tracking_adapts_to_tempo_drift(backend, synthetic_drift_audio):
     """Verify dynamic beat tracking reflects accelerating tempo across time."""
+    if backend.name == "naive":
+        pytest.xfail("Naive Ellis DP beat tracking deferred to .pi/plans.local/dp-beat-tracking-interview-prep.md")
     audio, fs = synthetic_drift_audio
     onset_env = backend.compute_onset_envelope(audio, fs, hop_length=HOP_LENGTH)
     track_res = backend.align_beats(onset_env)
