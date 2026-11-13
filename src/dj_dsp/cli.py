@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import webbrowser
+from typing import Optional
 import click
 import matplotlib
 import matplotlib.pyplot as plt
@@ -13,6 +14,18 @@ import numpy as np
 import soundfile as sf
 
 from dj_dsp.plotting import plot_shelf_spectrum
+from dj_dsp.rekordbox.cli_helpers import (
+    format_text_report,
+    resolve_pioneer_root,
+    serialize_diff_summary,
+    serialize_track_cues,
+)
+from dj_dsp.rekordbox.cue_sync import (
+    apply_cue_sheet_diff,
+    calculate_cue_sheet_diff,
+    write_atomic,
+)
+from dj_dsp.rekordbox.rekordbox_parser import scan_usb_anlz
 from dj_dsp.spectral import analyze_spectral_cutoff, compute_welch_spectrum
 from dj_dsp.spectral_data import CutoffDetectionAnalysis
 
@@ -56,6 +69,92 @@ def check_quality(audio_file: Path, duration: float | None, json_output: bool) -
 
     if analysis.is_suspicious_transcode:
         sys.exit(1)
+
+
+@main.group(name="rekordbox")
+def rekordbox_group() -> None:
+    """Rekordbox USB media analysis and cue synchronization commands."""
+
+
+@rekordbox_group.command(name="cues")
+@click.option(
+    "--usb-path",
+    "-u",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Path to mounted Pioneer USB root or PIONEER folder (auto-detected if omitted).",
+)
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    help="Output format: human-readable 'text' or machine-readable 'json'.",
+)
+@click.option(
+    "--update-cue-sheet",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to cue sheet markdown file to synchronize with extracted cues.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="When updating cue sheet, preview changes without writing to disk.",
+)
+@click.option(
+    "--include-metadata",
+    "-m",
+    is_flag=True,
+    default=False,
+    help="Include Rekordbox internal analysis metadata (e.g. BPM).",
+)
+def rekordbox_cues(
+    usb_path: Optional[Path],
+    output_format: str,
+    update_cue_sheet: Optional[Path],
+    dry_run: bool,
+    include_metadata: bool,
+) -> None:
+    """Extract cue points from Rekordbox USB and optionally update cue sheet markdown."""
+    try:
+        pioneer_root = resolve_pioneer_root(usb_path)
+    except FileNotFoundError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(2)
+
+    tracks = scan_usb_anlz(pioneer_root)
+    diff = None
+
+    if update_cue_sheet is not None:
+        if not update_cue_sheet.exists():
+            click.echo(f"Error: Cue sheet file not found: {update_cue_sheet}", err=True)
+            sys.exit(2)
+
+        original_text = update_cue_sheet.read_text(encoding="utf-8")
+        diff = calculate_cue_sheet_diff(original_text, tracks)
+
+        if diff.changed_tracks and not dry_run:
+            updated_text = apply_cue_sheet_diff(original_text, diff)
+            write_atomic(update_cue_sheet, updated_text)
+
+    if output_format.lower() == "json":
+        result = {
+            "pioneer_root": str(pioneer_root),
+            "tracks": [serialize_track_cues(t, include_metadata=include_metadata) for t in tracks],
+        }
+        if diff is not None:
+            sync_info = serialize_diff_summary(diff)
+            sync_info["dry_run"] = dry_run
+            sync_info["applied"] = bool(diff.changed_tracks and not dry_run)
+            result["cue_sheet_sync"] = sync_info
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo(format_text_report(tracks, diff=diff, include_metadata=include_metadata))
+        if update_cue_sheet and dry_run and diff and diff.changed_tracks:
+            click.echo("\n[Dry Run] No files modified on disk.")
 
 
 @main.command(name="plot-shelf")
