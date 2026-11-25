@@ -8,7 +8,6 @@ import librosa
 import numpy as np
 
 from dj_dsp.timing_data import (
-    Meter,
     MeterResult,
     OnsetEnvelope,
     TempoResult,
@@ -25,6 +24,7 @@ DEFAULT_MIN_BPM = 60.0
 DEFAULT_MAX_BPM = 200.0
 
 # Meter Discrimination Constants
+MIN_BEAT_INTERVALS_FOR_TEMPO = 2
 BAR_BEATS_THREE_FOUR = 3
 BAR_BEATS_FOUR_FOUR = 4
 MAX_EVALUATION_BEATS = 5
@@ -59,13 +59,18 @@ def estimate_tempo(
     max_bpm: float = DEFAULT_MAX_BPM,
 ) -> TempoResult:
     """Estimate global BPM and nominal beat interval using librosa."""
+    mid_bpm = (min_bpm + max_bpm) / 2.0
     bpm_arr = librosa.feature.tempo(
         onset_envelope=onset_env.values,
         sr=onset_env.fs,
         hop_length=onset_env.hop_length,
+        start_bpm=mid_bpm,
         max_tempo=max_bpm,
     )
     bpm = float(np.atleast_1d(bpm_arr)[0])
+    while bpm < min_bpm and bpm * 2.0 <= max_bpm:
+        bpm *= 2.0
+
     beat_interval_frames = bpm_to_lag_frames(bpm, onset_env.fs, onset_env.hop_length)
 
     return TempoResult(bpm=bpm, beat_interval_frames=beat_interval_frames)
@@ -134,7 +139,7 @@ LIBROSA_BACKEND = TimingBackend(
 
 def _derive_effective_bpm(beat_times: np.ndarray, fallback_bpm: float) -> float:
     """Derive effective global BPM from median inter-beat interval."""
-    if len(beat_times) < 2:
+    if len(beat_times) < MIN_BEAT_INTERVALS_FOR_TEMPO:
         return fallback_bpm
     diffs = np.diff(beat_times)
     positive_diffs = diffs[diffs > 0]
@@ -150,5 +155,5 @@ def _bound_max_autocorr_lag(
     max_beats: int = MAX_EVALUATION_BEATS,
 ) -> int:
     """Bound evaluation lag to max_beats, preventing out-of-bounds on short audio."""
-    target_lag_frames = int(round(max_beats * beat_interval_frames))
+    target_lag_frames = round(max_beats * beat_interval_frames)
     return min(total_frames, target_lag_frames)
