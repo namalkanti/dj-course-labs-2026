@@ -6,14 +6,33 @@ app = marimo.App(width="medium")
 
 @app.cell(hide_code=True)
 def init_marimo():
+    import io
+    import inspect
     import marimo as mo
-    import numpy as np
     import matplotlib.pyplot as plt
-    import soundfile as sf
-    import librosa
-    from scipy import signal
+    import numpy as np
 
-    return librosa, mo, np, plt, sf, signal
+    from dj_dsp.synth import generate_synthetic_beat
+    from dj_dsp.timing_librosa import LIBROSA_BACKEND
+    from dj_dsp.timing_naive import NAIVE_BACKEND
+
+    def fig_to_image(fig, dpi=100):
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return mo.image(buf.read(), rounded=True)
+
+    return (
+        LIBROSA_BACKEND,
+        NAIVE_BACKEND,
+        fig_to_image,
+        generate_synthetic_beat,
+        inspect,
+        mo,
+        np,
+        plt,
+    )
 
 
 @app.cell(hide_code=True)
@@ -57,7 +76,7 @@ def render_part1_overview(mo):
 @app.cell(hide_code=True)
 def render_part2_theory(mo):
     mo.md(r"""
-    ## Part 2: Transient Extraction via Spectral Flux
+    ## Part 2: The Hit (Transient Extraction via Spectral Flux)
 
     To locate rhythmic pulses, we must convert raw continuous waveform oscillations into a positive **onset strength envelope**.
 
@@ -74,18 +93,87 @@ def render_part2_theory(mo):
 
 
 @app.cell
-def part2_spectral_flux_scratch():
-    def compute_spectral_flux_scratch(
-        y,
-        sr: int = 44100,
-        n_fft: int = 2048,
-        hop_length: int = 512,
-    ):
-        """Compute half-wave rectified spectral flux onset envelope from scratch in NumPy."""
-        # TODO(Step 3): Implement scratch STFT differencing
-        pass
+def part2_audio_fixture(generate_synthetic_beat):
+    # 4 bars of 128 BPM house beat (kick on beats 1-4, snare on 2 & 4, hi-hats on offbeats)
+    fs_fixture = 44100
+    bpm_fixture = 128.0
+    audio_fixture = generate_synthetic_beat(
+        bpm=bpm_fixture, duration_sec=4.0, meter="4/4", fs=fs_fixture
+    )
+    time_fixture = np.arange(len(audio_fixture)) / fs_fixture
+    return audio_fixture, bpm_fixture, fs_fixture, time_fixture
 
-    return (compute_spectral_flux_scratch,)
+
+@app.cell
+def part2_compute_flux(LIBROSA_BACKEND, NAIVE_BACKEND, audio_fixture, fs_fixture):
+    naive_env = NAIVE_BACKEND.compute_onset_envelope(audio_fixture, fs=fs_fixture)
+    librosa_env = LIBROSA_BACKEND.compute_onset_envelope(audio_fixture, fs=fs_fixture)
+    return librosa_env, naive_env
+
+
+@app.cell(hide_code=True)
+def render_part2_plot(
+    audio_fixture,
+    fig_to_image,
+    librosa_env,
+    mo,
+    naive_env,
+    np,
+    plt,
+    time_fixture,
+):
+    fig, (ax_wave, ax_flux) = plt.subplots(
+        2, 1, figsize=(10, 5), sharex=True, gridspec_kw={"height_ratios": [1, 1.2]}
+    )
+
+    # Top: Raw audio waveform
+    ax_wave.plot(time_fixture, audio_fixture, color="#4a5568", alpha=0.7, lw=0.8)
+    ax_wave.set_ylabel("Amplitude", fontsize=10)
+    ax_wave.set_title("Raw Audio Waveform (128 BPM House Kick + Snare + Hi-Hat)", fontsize=11, fontweight="bold")
+    ax_wave.grid(True, linestyle="--", alpha=0.4)
+
+    # Bottom: Normalized Onset Strength Envelopes (Spectral Flux)
+    norm_naive = naive_env.values / (np.max(naive_env.values) + 1e-9)
+    norm_librosa = librosa_env.values / (np.max(librosa_env.values) + 1e-9)
+
+    ax_flux.plot(naive_env.times, norm_naive, label="NumPy Naive (Log-Spectral Flux)", color="#3182ce", lw=1.5)
+    ax_flux.plot(
+        librosa_env.times,
+        norm_librosa,
+        label="Production (librosa.onset.onset_strength)",
+        color="#e53e3e",
+        linestyle="--",
+        lw=1.2,
+        alpha=0.85,
+    )
+    ax_flux.set_xlabel("Time (seconds)", fontsize=10)
+    ax_flux.set_ylabel("Onset Strength", fontsize=10)
+    ax_flux.set_title("Detected Attacks: Sharp Spikes on Hits, Zero on Sustains/Decays", fontsize=11, fontweight="bold")
+    ax_flux.legend(loc="upper right", frameon=True, fontsize=9)
+    ax_flux.grid(True, linestyle="--", alpha=0.4)
+
+    plot_img = fig_to_image(fig)
+    plot_img
+    return
+
+
+@app.cell(hide_code=True)
+def render_part2_inspection(NAIVE_BACKEND, inspect, mo):
+    code_str = inspect.getsource(NAIVE_BACKEND.compute_onset_envelope)
+    acc = mo.accordion(
+        {
+            "💡 DJ Takeaway: Why simple volume meters fail on club tracks": mo.md(r"""
+            - **The Bass Trap**: A sustained sub-bass note (808 or synth reese) has huge amplitude, but our ears only tap to the *attack* (the instantaneous hit).
+            - **Spectral Flux Magic**: By taking differences in frequency bins frame-by-frame and keeping only *positive* changes ($\max(0, \Delta)$), the sustained body of the bass drops to zero while the sharp kick transient spikes violently.
+            - **Log Compression**: Without $\log(1 + 100 \cdot |X|)$, kick drums would overpower snares and hats by 100:1, blinding subsequent tempo analysis to everything except the kick.
+            """),
+            "🔬 View Source: `compute_onset_envelope` (from `dj_dsp.timing_naive`)": mo.md(
+                f"```python\n{code_str}\n```"
+            ),
+        }
+    )
+    acc
+    return
 
 
 @app.cell(hide_code=True)
@@ -112,9 +200,9 @@ def render_part3_theory(mo):
 
     ### Why Autocorrelation Handles Syncopation
     In funk, breakbeats, or garage, drums frequently play **syncopated hits**—accents on unexpected subdivisions (such as an 8th-note offbeat or a 16th-note anticipation) while leaving the expected onbeat empty.
-    
+
     If an algorithm only inspects individual bars locally with a simple peak detector, the loudest spike might land on an offbeat, causing a phase error (misplaced downbeat) or octave confusion.
-    
+
     Because autocorrelation integrates products over an extended multi-bar window ($4$ to $8$ bars):
     - Syncopated offbeats occur irregularly or at partial submultiples, so their cross-products remain diffuse.
     - The true metric grid ($T_{\text{beat}}$ and $4T_{\text{beat}}$) consistently reinforces itself at every measure through **constructive interference**, emerging as the dominant global lag peak.
@@ -140,7 +228,7 @@ def part3_tempo_autocorr_scratch():
         # TODO(Step 3): Implement peak picker within [min_bpm, max_bpm]
         pass
 
-    return autocorr_scratch, estimate_tempo_scratch
+    return
 
 
 @app.cell(hide_code=True)
@@ -164,14 +252,11 @@ def render_part4_theory(mo):
     return
 
 
-@app.cell
-def part4_meter_scratch():
-    def detect_meter_scratch(autocorr, beat_interval_frames: int, tolerance: float = 0.15):
-        """Classify 4/4 vs 3/4 meter by sampling autocorrelation at 3x and 4x beat intervals."""
-        # TODO(Step 3): Sample lags and compute ratio
-        pass
-
-    return (detect_meter_scratch,)
+@app.function
+def detect_meter_scratch(autocorr, beat_interval_frames: int, tolerance: float = 0.15):
+    """Classify 4/4 vs 3/4 meter by sampling autocorrelation at 3x and 4x beat intervals."""
+    # TODO(Step 3): Sample lags and compute ratio
+    pass
 
 
 @app.cell(hide_code=True)
@@ -212,8 +297,7 @@ def part5_ui_controls(mo):
         value=[70, 180],
         label="BPM Search Range",
     )
-
-    return tempo_range_slider, track_select, window_slider
+    return
 
 
 @app.cell(hide_code=True)
