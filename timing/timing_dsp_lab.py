@@ -122,11 +122,25 @@ def render_constants_reference(mo):
 # Section 1: Transient Extraction (Spectral Flux)
 # ---------------------------------------------------------------------------
 
+@app.cell(hide_code=True)
+def render_part1_heading(mo):
+    mo.md(r"""
+    ## I: Transient Extraction via Half-Wave Rectified Spectral Flux
+    """)
+    return
+
+@app.cell(hide_code=True)
+def render_explanation(mo):
+    mo.md(r"""
+    ### I-A: High level Overview:
+
+    """)
+    return
 
 @app.cell(hide_code=True)
 def render_part1_theory(mo):
     mo.md(r"""
-    ## Part 1: Transient Extraction via Half-Wave Rectified Spectral Flux
+    ### I-B: Mathematics
 
     To locate rhythmic events in raw continuous audio, we extract a 1D **onset strength envelope** $SF(n)$ using the Short-Time Fourier Transform (STFT).
 
@@ -145,7 +159,6 @@ def render_part1_theory(mo):
        where decaying sounds (reverberation, cymbal sustain) yield $\Delta \le 0$ and are discarded.
     """)
     return
-
 
 @app.function
 def compute_onset_envelope(
@@ -167,7 +180,21 @@ def compute_onset_envelope(
     """
     raise NotImplementedError("TODO: Implement from-scratch spectral flux")
 
+@app.cell(hide_code=True)
+def render_discoveries(mo):
+    mo.md(r"""
+    ### I-C: Personal Analysis Learnings
 
+    """)
+    return
+
+@app.cell(hide_code=True)
+def render_trade_offs(mo):
+    mo.md(r"""
+    ### I-D: Parameter Trade Offs:
+
+    """)
+    return
 # ---------------------------------------------------------------------------
 # Section 2: Global Tempo via Autocorrelation (Wiener–Khinchin)
 # ---------------------------------------------------------------------------
